@@ -1,14 +1,36 @@
 {
-    "name": "grails-support",
+    "name": "grails-extension-vscode",
     "displayName": "Grails Support",
     "description": "Grails language support for VS Code — navigation, completion, project tree, CLI",
     "version": "0.1.0",
+    "publisher": "JohanMixtegaCisneros",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/Johan070119/Grails-VsCode-Extension"
+    },
     "engines": {
         "vscode": "^1.80.0"
     },
     "categories": [
         "Programming Languages",
         "Other"
+    ],
+    "keywords": [
+        "grails",
+        "groovy",
+        "gsp",
+        "java",
+        "spring",
+        "mvc",
+        "web framework",
+        "language server",
+        "lsp",
+        "autocomplete",
+        "navigation",
+        "scaffold",
+        "domain",
+        "controller",
+        "service"
     ],
     "activationEvents": [
         "onLanguage:groovy",
@@ -201,5 +223,6 @@
         "@types/node": "^25.4.0",
         "@types/vscode": "^1.80.0",
         "typescript": "^5.9.3"
-    }
+    },
+    "icon": "images/icon.png"
 }
