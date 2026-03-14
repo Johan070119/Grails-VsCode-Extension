@@ -1,0 +1,205 @@
+{
+    "name": "grails-support",
+    "displayName": "Grails Support",
+    "description": "Grails language support for VS Code — navigation, completion, project tree, CLI",
+    "version": "0.1.0",
+    "engines": {
+        "vscode": "^1.80.0"
+    },
+    "categories": [
+        "Programming Languages",
+        "Other"
+    ],
+    "activationEvents": [
+        "onLanguage:groovy",
+        "workspaceContains:grails-app"
+    ],
+    "main": "./dist/extension.js",
+    "contributes": {
+        "languages": [
+            {
+                "id": "groovy",
+                "extensions": [
+                    ".groovy",
+                    ".gsp"
+                ],
+                "aliases": [
+                    "Groovy",
+                    "Grails"
+                ]
+            }
+        ],
+        "configuration": {
+            "title": "Grails",
+            "properties": {
+                "grails.trace.server": {
+                    "type": "string",
+                    "enum": [
+                        "off",
+                        "messages",
+                        "verbose"
+                    ],
+                    "default": "off",
+                    "description": "Trace LSP communication"
+                }
+            }
+        },
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "grails-explorer",
+                    "title": "Grails",
+                    "icon": "$(package)"
+                }
+            ]
+        },
+        "views": {
+            "grails-explorer": [
+                {
+                    "id": "grailsProjectExplorer",
+                    "name": "Project",
+                    "when": "workspaceContains:grails-app"
+                }
+            ]
+        },
+        "commands": [
+            {
+                "command": "grails.runApp",
+                "title": "Run App",
+                "category": "Grails",
+                "icon": "$(play)"
+            },
+            {
+                "command": "grails.runAppDebug",
+                "title": "Run App (Debug)",
+                "category": "Grails",
+                "icon": "$(debug-alt)"
+            },
+            {
+                "command": "grails.stopApp",
+                "title": "Stop App",
+                "category": "Grails",
+                "icon": "$(debug-stop)"
+            },
+            {
+                "command": "grails.testApp",
+                "title": "Run Tests",
+                "category": "Grails",
+                "icon": "$(beaker)"
+            },
+            {
+                "command": "grails.clean",
+                "title": "Clean",
+                "category": "Grails"
+            },
+            {
+                "command": "grails.createController",
+                "title": "Create Controller",
+                "category": "Grails"
+            },
+            {
+                "command": "grails.createDomain",
+                "title": "Create Domain Class",
+                "category": "Grails"
+            },
+            {
+                "command": "grails.createService",
+                "title": "Create Service",
+                "category": "Grails"
+            },
+            {
+                "command": "grails.generateAll",
+                "title": "Generate All (Scaffold)",
+                "category": "Grails"
+            },
+            {
+                "command": "grails.refreshTree",
+                "title": "Refresh",
+                "category": "Grails",
+                "icon": "$(refresh)"
+            }
+        ],
+        "menus": {
+            "view/title": [
+                {
+                    "command": "grails.runApp",
+                    "when": "view == grailsProjectExplorer",
+                    "group": "navigation@1"
+                },
+                {
+                    "command": "grails.stopApp",
+                    "when": "view == grailsProjectExplorer",
+                    "group": "navigation@2"
+                },
+                {
+                    "command": "grails.testApp",
+                    "when": "view == grailsProjectExplorer",
+                    "group": "navigation@3"
+                },
+                {
+                    "command": "grails.refreshTree",
+                    "when": "view == grailsProjectExplorer",
+                    "group": "navigation@4"
+                }
+            ],
+            "commandPalette": [
+                {
+                    "command": "grails.runApp",
+                    "when": "workspaceContains:grails-app"
+                },
+                {
+                    "command": "grails.runAppDebug",
+                    "when": "workspaceContains:grails-app"
+                },
+                {
+                    "command": "grails.stopApp",
+                    "when": "workspaceContains:grails-app"
+                },
+                {
+                    "command": "grails.testApp",
+                    "when": "workspaceContains:grails-app"
+                },
+                {
+                    "command": "grails.clean",
+                    "when": "workspaceContains:grails-app"
+                },
+                {
+                    "command": "grails.createController",
+                    "when": "workspaceContains:grails-app"
+                },
+                {
+                    "command": "grails.createDomain",
+                    "when": "workspaceContains:grails-app"
+                },
+                {
+                    "command": "grails.createService",
+                    "when": "workspaceContains:grails-app"
+                },
+                {
+                    "command": "grails.generateAll",
+                    "when": "workspaceContains:grails-app"
+                },
+                {
+                    "command": "grails.refreshTree",
+                    "when": "workspaceContains:grails-app"
+                }
+            ]
+        }
+    },
+    "scripts": {
+        "compile": "tsc -p tsconfig.json && npm run compile:server",
+        "compile:server": "cd server && tsc -p tsconfig.json",
+        "watch": "tsc -p tsconfig.json --watch",
+        "watch:server": "cd server && tsc -p tsconfig.json --watch",
+        "build": "npm run compile",
+        "vscode:prepublish": "npm run build"
+    },
+    "dependencies": {
+        "vscode-languageclient": "^9.0.0"
+    },
+    "devDependencies": {
+        "@types/node": "^25.4.0",
+        "@types/vscode": "^1.80.0",
+        "typescript": "^5.9.3"
+    }
+}

@@ -1,0 +1,97 @@
+import {
+    createConnection,
+    ProposedFeatures,
+    TextDocuments,
+    TextDocumentSyncKind,
+    InitializeParams,
+    InitializeResult,
+    CompletionItem,
+    TextDocumentPositionParams,
+    DidChangeWatchedFilesParams,
+    FileChangeType,
+    Location,
+} from "vscode-languageserver/node";
+import { TextDocument } from "vscode-languageserver-textdocument";
+import { GrailsIndexer } from "./indexer";
+import { getCompletions } from "./completion";
+import { getDefinition } from "./definition";
+
+const connection = createConnection(ProposedFeatures.all);
+const documents = new TextDocuments(TextDocument);
+const indexer = new GrailsIndexer(connection);
+
+// ─── Initialize ───────────────────────────────────────────────────────────────
+
+connection.onInitialize((params: InitializeParams): InitializeResult => {
+    const folders =
+        params.workspaceFolders?.map((f) => f.uri.replace(/^file:\/\//, "")) ??
+        [];
+
+    if (folders.length > 0) {
+        indexer.initialize(folders);
+    } else if (params.rootUri) {
+        indexer.initialize([params.rootUri.replace(/^file:\/\//, "")]);
+    } else if (params.rootPath) {
+        indexer.initialize([params.rootPath]);
+    }
+
+    return {
+        capabilities: {
+            textDocumentSync: TextDocumentSyncKind.Incremental,
+            completionProvider: {
+                resolveProvider: false,
+                // Trigger completions on dot and opening paren
+                triggerCharacters: [".", "(", ":"],
+            },
+            definitionProvider: true,
+            workspace: {
+                workspaceFolders: { supported: true },
+            },
+        },
+        serverInfo: {
+            name: "Grails Language Server",
+            version: "1.0.0",
+        },
+    };
+});
+
+// ─── Completions ──────────────────────────────────────────────────────────────
+
+connection.onCompletion(
+    (params: TextDocumentPositionParams): CompletionItem[] => {
+        const doc = documents.get(params.textDocument.uri);
+        if (!doc) return [];
+
+        const project = indexer.getProject();
+        return getCompletions(doc, params, project);
+    },
+);
+
+// ─── Go to Definition ─────────────────────────────────────────────────────────
+
+connection.onDefinition(
+    (params: TextDocumentPositionParams): Location | null => {
+        const doc = documents.get(params.textDocument.uri);
+        if (!doc) return null;
+        return getDefinition(doc, params, indexer.getProject());
+    },
+);
+
+// ─── File watching ────────────────────────────────────────────────────────────
+
+connection.onDidChangeWatchedFiles((params: DidChangeWatchedFilesParams) => {
+    for (const change of params.changes) {
+        if (change.type !== FileChangeType.Deleted) {
+            indexer.onFileChanged(change.uri.replace(/^file:\/\//, ""));
+        }
+    }
+});
+
+// ─── Lifecycle ────────────────────────────────────────────────────────────────
+
+connection.onShutdown(() => {
+    indexer.dispose();
+});
+
+documents.listen(connection);
+connection.listen();
