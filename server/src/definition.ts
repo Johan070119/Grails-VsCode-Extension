@@ -8,12 +8,13 @@ import {
 } from "vscode-languageserver";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { GrailsProject, DomainClass } from "./grailsProject";
+import { uriToPath, pathToUri } from "./uriUtils";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function toLocation(filePath: string, line = 0, character = 0): Location {
     return {
-        uri: `file://${filePath}`,
+        uri: pathToUri(filePath),
         range: Range.create(
             Position.create(line, character),
             Position.create(line, character),
@@ -481,7 +482,7 @@ export function getDefinition(
 ): Location | null {
     if (!project) return null;
 
-    const filePath = doc.uri.replace(/^file:\/\//, "");
+    const filePath = uriToPath(doc.uri);
     const word = wordAtPosition(doc, params);
     const line = lineAt(doc, params);
     const cursorLine = params.position.line;

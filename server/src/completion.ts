@@ -13,6 +13,7 @@ import {
     GrailsArtifact,
     inferDomainFromController,
 } from "./grailsProject";
+import { uriToPath } from "./uriUtils";
 
 // ─── Context detection ────────────────────────────────────────────────────────
 
@@ -75,7 +76,7 @@ function detectContext(
     project: GrailsProject | null,
 ): CompletionContext {
     const lineUpTo = getLineUpToCursor(doc, params);
-    const filePath = doc.uri.replace(/^file:\/\//, "");
+    const filePath = uriToPath(doc.uri);
     const cursorLine = params.position.line;
 
     // ── import ───────────────────────────────────────────────────────────────
@@ -792,7 +793,7 @@ export function getCompletions(
     project: GrailsProject | null,
 ): CompletionItem[] {
     const ctx = detectContext(doc, params, project);
-    const filePath = doc.uri.replace(/^file:\/\//, "");
+    const filePath = uriToPath(doc.uri);
 
     switch (ctx.kind) {
         case "import":

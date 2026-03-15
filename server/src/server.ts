@@ -15,6 +15,7 @@ import { TextDocument } from "vscode-languageserver-textdocument";
 import { GrailsIndexer } from "./indexer";
 import { getCompletions } from "./completion";
 import { getDefinition } from "./definition";
+import { uriToPath } from "./uriUtils";
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -23,14 +24,12 @@ const indexer = new GrailsIndexer(connection);
 // ─── Initialize ───────────────────────────────────────────────────────────────
 
 connection.onInitialize((params: InitializeParams): InitializeResult => {
-    const folders =
-        params.workspaceFolders?.map((f) => f.uri.replace(/^file:\/\//, "")) ??
-        [];
+    const folders = params.workspaceFolders?.map((f) => uriToPath(f.uri)) ?? [];
 
     if (folders.length > 0) {
         indexer.initialize(folders);
     } else if (params.rootUri) {
-        indexer.initialize([params.rootUri.replace(/^file:\/\//, "")]);
+        indexer.initialize([uriToPath(params.rootUri)]);
     } else if (params.rootPath) {
         indexer.initialize([params.rootPath]);
     }
@@ -82,7 +81,7 @@ connection.onDefinition(
 connection.onDidChangeWatchedFiles((params: DidChangeWatchedFilesParams) => {
     for (const change of params.changes) {
         if (change.type !== FileChangeType.Deleted) {
-            indexer.onFileChanged(change.uri.replace(/^file:\/\//, ""));
+            indexer.onFileChanged(uriToPath(change.uri));
         }
     }
 });

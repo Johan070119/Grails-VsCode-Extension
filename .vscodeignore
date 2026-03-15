@@ -1,9 +1,10 @@
 .vscode/
 .gitignore
-node_modules/
 src/
 server/src/
-server/node_modules/
+server/node_modules/.bin/
+server/node_modules/typescript/
+server/node_modules/@types/
 tsconfig.json
 server/tsconfig.json
 **/*.ts

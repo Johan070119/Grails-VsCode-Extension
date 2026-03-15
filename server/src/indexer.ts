@@ -1,9 +1,9 @@
-//server/src/indexer.ts
 import * as fs from "fs";
 import * as path from "path";
 import { Connection } from "vscode-languageserver/node";
 import {
     GrailsProject,
+    GrailsVersion,
     buildGrailsProject,
     findGrailsRoot,
     isGrailsProject,
@@ -21,7 +21,6 @@ export class GrailsIndexer {
 
     // ─── Public API ───────────────────────────────────────────────────────────
 
-    /** Call once on initialize with the workspace root folders */
     initialize(workspaceFolders: string[]): void {
         for (const folder of workspaceFolders) {
             const root = isGrailsProject(folder)
@@ -33,7 +32,7 @@ export class GrailsIndexer {
                 );
                 this.index(root);
                 this.watchProject(root);
-                return; // single project per workspace for now
+                return;
             }
         }
         this.connection.console.log(
@@ -41,12 +40,10 @@ export class GrailsIndexer {
         );
     }
 
-    /** Re-index when a file changes (called from onDidChangeWatchedFiles) */
     onFileChanged(changedPath: string): void {
         if (!this.project) return;
         if (!changedPath.endsWith(".groovy")) return;
 
-        // Debounce: wait 300ms after last change before rebuilding
         if (this.rebuildTimer) clearTimeout(this.rebuildTimer);
         this.rebuildTimer = setTimeout(() => {
             this.connection.console.log(
@@ -82,22 +79,34 @@ export class GrailsIndexer {
 
     private logStats(): void {
         if (!this.project) return;
-        const { domains, controllers, services, taglibs } = this.project;
+        const { domains, controllers, services, taglibs, version } =
+            this.project;
         this.connection.console.log(
-            `[Grails] Index complete — ` +
+            `[Grails] Indexed (v${version}) — ` +
                 `${domains.size} domains, ${controllers.size} controllers, ` +
                 `${services.size} services, ${taglibs.size} taglibs`,
         );
     }
 
-    /** Watch grails-app subdirs for .groovy changes */
+    /**
+     * Watch directories for .groovy changes.
+     * Grails 2:  only grails-app subdirs
+     * Grails 3+: also src/main/groovy (may contain domain classes)
+     */
     private watchProject(root: string): void {
+        const version: GrailsVersion = this.project?.version ?? "unknown";
+
         const dirsToWatch = [
             "grails-app/domain",
             "grails-app/controllers",
             "grails-app/services",
             "grails-app/taglib",
         ];
+
+        // Grails 3+ additional source dirs
+        if (version !== "2") {
+            dirsToWatch.push("src/main/groovy");
+        }
 
         for (const rel of dirsToWatch) {
             const dir = path.join(root, rel);
@@ -114,7 +123,8 @@ export class GrailsIndexer {
                 );
                 this.watchers.push(watcher);
             } catch {
-                // fs.watch not available on all platforms — silent fail
+                // fs.watch with recursive:true not supported on all platforms
+                // (notably Linux requires inotify). Fail silently.
             }
         }
     }

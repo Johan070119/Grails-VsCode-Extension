@@ -1,8 +1,8 @@
 {
     "name": "grails-extension-vscode",
-    "displayName": "Grails Support",
+    "displayName": "Grails Support For VS Code",
     "description": "Grails language support for VS Code — navigation, completion, project tree, CLI",
-    "version": "0.1.0",
+    "version": "0.3.1",
     "publisher": "JohanMixtegaCisneros",
     "repository": {
         "type": "git",
