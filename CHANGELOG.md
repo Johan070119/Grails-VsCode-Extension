@@ -1,5 +1,65 @@
 # Change Log
 
+## [0.4.0] - 2026-03-16
+
+### Added
+
+**Autocompletado de métodos de servicios y controllers**
+- Al escribir `miServicio.` ahora muestra la lista de métodos definidos en el servicio, parseados en tiempo real desde el archivo fuente
+- Soporta todos los estilos de declaración de servicio: `def miServicio`, `MiService miServicio` (con tipo explícito), y referencias por nombre de clase directa (`MiService.metodo()`)
+- Soporta métodos con cualquier modificador: `def`, `Map`, `String`, `boolean`, `void`, `public`, `private`, `protected`, `public static`, etc.
+- Al escribir `SwaggerController.` o cualquier nombre de controller con punto, muestra sus acciones disponibles
+- Al escribir `TestService.` o cualquier nombre de servicio con punto (importado como clase), muestra sus métodos
+
+**Sugerencias de nombres de clase (sin punto)**
+- Al empezar a escribir un nombre de controller o servicio (ej. `Swagger`, `Fusion`), el autocompletado sugiere `SwaggerController`, `FusionIntegrationService`, etc.
+- No requiere import — funciona con cualquier artefacto indexado del proyecto
+
+**Vista de proyecto mejorada**
+- Nodo de versión de Grails al inicio del árbol (`Grails 2.5.6`)
+- Iconos diferenciados por tipo de carpeta (controllers, domain, services, views, conf, i18n, taglib, assets)
+- Soporte para estructura Grails 2 (`web-app/`) y Grails 3+ (`src/main/groovy`, `src/main/resources`)
+
+**Creación de artefactos desde el árbol (clic derecho)**
+- Crear Controller, Domain Class, Service, TagLib y Vista GSP directamente en la carpeta seleccionada, sin usar el CLI de Grails
+- Soporte de sub-paquetes al crear: escribir `com/example/Book` crea las subcarpetas necesarias
+- Package inferido automáticamente de la ruta del archivo
+- Template de Service adaptado a la versión de Grails detectada:
+  - Grails 2.0–2.3: `static transactional = true`
+  - Grails 2.4–5.x: `import grails.transaction.Transactional` + `@Transactional`
+  - Grails 6.x–7+: `import grails.gorm.transactions.Transactional` + `@Transactional`
+- Crear carpeta genérica y archivo genérico con extensión libre
+- Opciones de menú contextual organizadas por grupos: acción principal, genéricos y todos los artefactos Grails
+
+**Renombrar y eliminar desde el árbol**
+- Renombrar archivos y carpetas con clic derecho → Renombrar
+- Al renombrar una carpeta, ofrece actualizar automáticamente las declaraciones `package` en todos los archivos `.groovy` dentro de ella (incluyendo sub-paquetes)
+- Eliminar archivos y carpetas con confirmación modal
+
+**Navegación (Ctrl+Click) extendida**
+- `SwaggerController.metodo()` → navega a la línea exacta del método en el controller
+- `TestService.metodo()` (referencia por clase directa) → navega a la línea exacta del método en el service
+- Soporte para métodos `public static` y con tipos de retorno Java en la navegación
+
+**Status bar**
+- Muestra la versión de Grails detectada (`⬡ Grails 2.5.6`) en la barra de estado
+- Clic en el status bar ejecuta `grails run-app`
+
+**CodeLens en controllers**
+- Aparece un enlace `$(file-code) show.gsp` encima de cada acción que tiene una vista GSP correspondiente
+- Clic en el CodeLens abre directamente la vista
+
+### Fixed
+
+- Autocompletado de servicios con nombres multi-palabra (ej. `fusionTokenService`, `accountActivationService`) que antes no mostraba métodos debido a un error de camelCase splitting en la detección de contexto
+- Regex `serviceMatch` e `instanceMatch` corregidos — un byte de control invisible (`\x08`) que se había colado en el código impedía que los regex matchearan, causando que todos los servicios inyectados cayeran a `generic_grails` sin mostrar métodos
+- Métodos `public static` de servicios (como en `ToolsService`) ahora se detectan correctamente por el parser de métodos
+- Menú contextual del árbol: la opción "Nueva Vista GSP" ya no aparece en carpetas que no son de vistas; cada carpeta muestra su opción principal correspondiente
+- Al completar un nombre de controller o service y presionar Enter, ya no se inserta un punto extra (`TestService..` → `TestService`)
+- Comparación case-insensitive en `declaredServiceCompletions` para servicios multi-palabra (ej. `fusionTokenService` → `FusionTokenService`)
+
+---
+
 ## [0.3.1] - 2026-03-15
 
 ### Added

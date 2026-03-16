@@ -19,13 +19,17 @@ import { uriToPath } from "./uriUtils";
 
 type CompletionKind =
     | "import" // import com.example.|
-    | "gorm_static" // Book.|
+    | "domain_name" // def x = Fus|  or  Fusion.  (unresolved yet)
+    | "gorm_static" // Book.|  or  pkg.Book.|
+    | "gorm_static_and" // Book.findByTitle|  — cursor after a findBy, add AndProp
     | "gorm_instance" // book.|
     | "service_injection" // bookService.|
+    | "controller_static" // SwaggerController.|
     | "string_controller" // controller: "b|"  or  controller: '|'
     | "string_action" // action: "lo|"  — needs controller context
     | "string_view" // view: "/lay|"  or  view: "sh|"
     | "render_redirect_key" // render(|  or  redirect(|  — named arg keys
+    | "artifact_name" // SwaggerController|  TestService|  (bare word, no dot yet)
     | "generic_grails";
 
 interface CompletionContext {
@@ -38,6 +42,14 @@ interface CompletionContext {
     viewPrefix?: string;
     // For import: column where the package path starts (after "import ")
     importStartCol?: number;
+    // For gorm_static_and: the method typed so far (e.g. "findByTitleAnd")
+    finderPrefix?: string;
+    // For domain_name: set of imported class names in the current file
+    importedNames?: Set<string>;
+    // For controller_static: the controller class name
+    controllerName?: string;
+    // For artifact_name: the typed prefix
+    artifactPrefix?: string;
 }
 
 function getLineUpToCursor(
@@ -68,6 +80,51 @@ function resolveControllerFromContext(
         }
     }
     return null;
+}
+
+/**
+ * Parses all imported class names from the document text.
+ * Returns a Set of simple class names: "import util.Fusion" → "Fusion"
+ * Also includes "*" wildcard imports: "import usuarios.*" → adds all domains
+ * from the "usuarios" package.
+ */
+function parseImportedNames(
+    docText: string,
+    project: GrailsProject | null,
+): Set<string> {
+    const imported = new Set<string>();
+    const lines = docText.split("\n");
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("import ")) continue;
+
+        // Wildcard: import usuarios.*  or  import util.*
+        const wildcardMatch = /^import\s+([\w.]+)\.\*/.exec(trimmed);
+        if (wildcardMatch && project) {
+            const pkg = wildcardMatch[1]; // e.g. "usuarios"
+            // Add all domains/controllers/services whose package matches
+            for (const [name, domain] of project.domains) {
+                const rel = domain.filePath.replace(/\\/g, "/");
+                // Package is inferred from path: grails-app/domain/usuarios/Foo.groovy → "usuarios"
+                if (
+                    rel.includes(`/${pkg}/`) ||
+                    rel.endsWith(`/${pkg}.groovy`)
+                ) {
+                    imported.add(name);
+                }
+            }
+            continue;
+        }
+
+        // Named import: import util.Fusion  or  import com.example.Book
+        const namedMatch = /^import\s+[\w.]+\.([A-Z]\w+)$/.exec(trimmed);
+        if (namedMatch) {
+            imported.add(namedMatch[1]);
+        }
+    }
+
+    return imported;
 }
 
 function detectContext(
@@ -114,20 +171,145 @@ function detectContext(
         return { kind: "render_redirect_key" };
     }
 
-    // ── GORM static: Book.| ──────────────────────────────────────────────────
-    const staticMatch = /\b([A-Z]\w+)\.(\w*)$/.exec(lineUpTo);
+    // ── Package-qualified or bare domain: util.Fusion.| or util.Fusion.findBy|
+    // Also handles ControllerName.| and ServiceName.| (class-level references)
+    const pkgDomainMatch = /(?:[\w]+\.)*([A-Z]\w+)\.(\w*)$/.exec(lineUpTo);
+    if (pkgDomainMatch) {
+        const candidate = pkgDomainMatch[1];
+
+        // 1. Domain class check (requires import)
+        const domain = project?.domains.get(candidate);
+        if (domain) {
+            const fullMatch = pkgDomainMatch[0];
+            const hasPkgPrefix =
+                fullMatch.indexOf(".") !== fullMatch.lastIndexOf(".");
+            const importedNamesLocal = parseImportedNames(
+                doc.getText(),
+                project,
+            );
+            const isImported =
+                hasPkgPrefix || importedNamesLocal.has(candidate);
+            if (isImported) {
+                const finderSoFar = pkgDomainMatch[2];
+                if (
+                    /^(?:find(?:All)?By|listBy|countBy|existsBy)\w+(And|Or)\w*$/.test(
+                        finderSoFar,
+                    ) ||
+                    /^(?:find(?:All)?By|listBy|countBy|existsBy)\w+And\w*$/.test(
+                        finderSoFar,
+                    )
+                ) {
+                    return {
+                        kind: "gorm_static_and",
+                        domainName: candidate,
+                        finderPrefix: finderSoFar,
+                    };
+                }
+                return {
+                    kind: "gorm_static",
+                    domainName: candidate,
+                    finderPrefix: finderSoFar || undefined,
+                };
+            }
+        }
+
+        // 2. Controller class check (SwaggerController. — no import required)
+        if (project?.controllers.has(candidate)) {
+            return { kind: "controller_static", controllerName: candidate };
+        }
+
+        // 3. Service class check — only when candidate looks like a full class name
+        // (not a camelCase fragment like "TokenService" from "fusionTokenService.")
+        // Heuristic: the character before the candidate in lineUpTo must be a space,
+        // = sign, ( or start of line — NOT a lowercase letter (which would be camelCase split)
+        if (project?.services.has(candidate)) {
+            const beforeCandidate = lineUpTo.slice(
+                0,
+                pkgDomainMatch.index +
+                    pkgDomainMatch[0].length -
+                    pkgDomainMatch[1].length -
+                    pkgDomainMatch[2].length -
+                    1,
+            );
+            const lastChar = beforeCandidate.slice(-1);
+            const isCamelCaseSplit = /[a-z]/.test(lastChar);
+            if (!isCamelCaseSplit) {
+                return { kind: "service_injection", instanceName: candidate };
+            }
+        }
+    }
+    // ── GORM static: Book.| (simple, no package prefix) ─────────────────────
+    const staticMatch = /([A-Z]\w+)\.(\w*)$/.exec(lineUpTo);
     if (staticMatch && project?.domains.has(staticMatch[1])) {
-        return { kind: "gorm_static", domainName: staticMatch[1] };
+        const importedNamesStatic = parseImportedNames(doc.getText(), project);
+        if (importedNamesStatic.has(staticMatch[1])) {
+            const finderSoFar = staticMatch[2];
+            if (
+                /^(?:find(?:All)?By|listBy|countBy|existsBy)\w+(And|Or)\w*$/.test(
+                    finderSoFar,
+                ) ||
+                /^(?:find(?:All)?By|listBy|countBy|existsBy)\w+And\w*$/.test(
+                    finderSoFar,
+                )
+            ) {
+                return {
+                    kind: "gorm_static_and",
+                    domainName: staticMatch[1],
+                    finderPrefix: finderSoFar,
+                };
+            }
+            return {
+                kind: "gorm_static",
+                domainName: staticMatch[1],
+                finderPrefix: finderSoFar || undefined,
+            };
+        }
     }
 
+    // ── Domain / Controller / Service bare word: Fus|  SwaggerController|  BookService| ─
+    // Suggests class names when user types a capitalized word after =, (, [, etc.
+    // but NOT after a dot (already handled above).
+    const bareWordMatch = /(?:=\s*|[\(\[,]\s*|^\s*)([A-Z]\w*)$/.exec(lineUpTo);
+    if (bareWordMatch && project && !lineUpTo.trimEnd().endsWith(".")) {
+        const typed = bareWordMatch[1];
+        if (typed.length >= 1) {
+            const lowerTyped = typed.toLowerCase();
+            const importedNames = parseImportedNames(doc.getText(), project);
+
+            // Domains require import
+            const hasDomainMatch = [...project.domains.keys()].some(
+                (d) =>
+                    d.toLowerCase().startsWith(lowerTyped) &&
+                    importedNames.has(d),
+            );
+            if (hasDomainMatch) {
+                return {
+                    kind: "domain_name",
+                    instanceName: typed,
+                    importedNames,
+                };
+            }
+
+            // Controllers and services: no import required for class-level reference
+            const hasControllerMatch = [...project.controllers.keys()].some(
+                (c) => c.toLowerCase().startsWith(lowerTyped),
+            );
+            const hasServiceMatch = [...project.services.keys()].some((s) =>
+                s.toLowerCase().startsWith(lowerTyped),
+            );
+            if (hasControllerMatch || hasServiceMatch) {
+                return { kind: "artifact_name", artifactPrefix: typed };
+            }
+        }
+    }
     // ── service instance: bookService.| ──────────────────────────────────────
-    const serviceMatch = /\b(\w+Service)\??\.(\w*)$/.exec(lineUpTo);
+    const serviceMatch = /(\w+Service)\??\.(\w*)$/.exec(lineUpTo);
     if (serviceMatch && project) {
         return { kind: "service_injection", instanceName: serviceMatch[1] };
     }
 
     // ── GORM instance: book.| ─────────────────────────────────────────────────
-    const instanceMatch = /\b([a-z]\w*)\??\.(\w*)$/.exec(lineUpTo);
+    const instanceMatch = /([a-z]\w*)\??\.(\w*)$/.exec(lineUpTo);
     if (instanceMatch && project) {
         const varName = instanceMatch[1];
         const domainName = [...project.domains.keys()].find(
@@ -376,37 +558,160 @@ function viewPathCompletions(
     return items;
 }
 
+// ── Domain name completions (bare word: def x = Fus|) ───────────────────────
+
+/**
+ * Suggests domain class names when the user types a capitalized prefix
+ * without a dot yet — e.g. "def x = Fus" → suggests "Fusion", "FusionType"…
+ * Includes a snippet that inserts "ClassName." so they can continue typing.
+ */
+function domainNameCompletions(
+    typedPrefix: string,
+    project: GrailsProject,
+    importedNames?: Set<string>,
+): CompletionItem[] {
+    const lowerTyped = typedPrefix.toLowerCase();
+    return [...project.domains.values()]
+        .filter(
+            (d) =>
+                d.name.toLowerCase().startsWith(lowerTyped) &&
+                importedNames != null &&
+                importedNames.has(d.name),
+        )
+        .map(
+            (d) =>
+                ({
+                    label: d.name,
+                    kind: CompletionItemKind.Class,
+                    detail: `Domain class — ${d.properties.length} properties`,
+                    documentation: {
+                        kind: MarkupKind.Markdown,
+                        value: [
+                            `**${d.name}** domain class`,
+                            d.properties.length > 0
+                                ? `\nProperties: ${d.properties
+                                      .slice(0, 5)
+                                      .map((p) => `\`${p.type} ${p.name}\``)
+                                      .join(
+                                          ", ",
+                                      )}${d.properties.length > 5 ? "…" : ""}`
+                                : "",
+                        ].join(""),
+                    },
+                    insertText: d.name,
+                }) as CompletionItem,
+        );
+}
+
+// ── GORM And/Or chaining completions ─────────────────────────────────────────
+
+/**
+ * When the user has typed e.g. "Fusion.findByDescripcionAnd" we offer all
+ * remaining properties as the next And/Or segment.
+ *
+ * Example:
+ *   Fusion.findByDescripcionAnd|  →  AndAutorizacion, AndUrl, AndActivo …
+ *   Fusion.findAllByTipoOrActivo|  →  OrDescripcion, OrUrl …
+ *
+ * The connector (And/Or) is determined from what the user last typed.
+ */
+function gormStaticAndCompletions(
+    finderPrefix: string,
+    domain: DomainClass,
+): CompletionItem[] {
+    // Extract all properties already in the chain using two-pass approach:
+    // Pass 1: first property after findBy/findAllBy
+    // Pass 2: each property after And/Or connectors
+    // Old single-regex approach missed props after the first because "By" only appears once.
+    const usedProps = new Set<string>();
+
+    const firstPropMatch = /^find(?:All)?By([A-Z]\w+?)(?=And|Or|$)/.exec(
+        finderPrefix,
+    );
+    if (firstPropMatch) usedProps.add(firstPropMatch[1].toLowerCase());
+
+    const segmentRe = /(?:And|Or)([A-Z]\w+?)(?=And|Or|$)/g;
+    let m: RegExpExecArray | null;
+    while ((m = segmentRe.exec(finderPrefix)) !== null) {
+        usedProps.add(m[1].toLowerCase());
+    }
+
+    // Compute the base: everything up to and including the last "And"/"Or"
+    // e.g. "findByNombreAnd" from "findByNombreAndP"
+    const baseMatch = /^(.*(?:And|Or))\w*$/.exec(finderPrefix);
+    // When no And/Or yet (first chaining), base is the full finderPrefix
+    const base = baseMatch ? baseMatch[1] : finderPrefix;
+
+    // paramCount = one param per property already in the chain
+    const paramCount = usedProps.size;
+
+    const items: CompletionItem[] = [];
+
+    for (const prop of domain.properties) {
+        if (usedProps.has(prop.name.toLowerCase())) continue;
+        const propCap = prop.name.charAt(0).toUpperCase() + prop.name.slice(1);
+
+        // Build full finder name for filterText and insertText
+        // VS Code sees "findByNombreAndP" as ONE word (all \w chars)
+        // So filterText must be the full word, and insertText must replace it entirely
+        const andFullName = `${base}${propCap}`;
+        const orBase = base.replace(/(And|Or)$/, "Or");
+        const orFullName = `${orBase}${propCap}`;
+
+        // Build snippet params: ($1, $2) for 2 props, ($1, $2, $3) for 3, etc.
+        const params = Array.from(
+            { length: paramCount + 1 },
+            (_, k) => `$${k + 1}`,
+        ).join(", ");
+
+        items.push({
+            label: `And${propCap}`,
+            filterText: andFullName,
+            kind: CompletionItemKind.Method,
+            detail: `And: ${prop.type} ${prop.name}`,
+            insertText: `${andFullName}(${params})`,
+            insertTextFormat: 2,
+        });
+
+        items.push({
+            label: `Or${propCap}`,
+            filterText: orFullName,
+            kind: CompletionItemKind.Method,
+            detail: `Or: ${prop.type} ${prop.name}`,
+            insertText: `${orFullName}(${params})`,
+            insertTextFormat: 2,
+        });
+    }
+
+    return items;
+}
+
 // ── GORM static completions ───────────────────────────────────────────────────
 
 function gormStaticCompletions(domain: DomainClass): CompletionItem[] {
     const d = domain.name;
-    const props = domain.properties.map((p) => p.name);
+    const props = domain.properties;
 
-    const findByItems = props.map(
-        (p) =>
-            ({
-                label: `findBy${capitalize(p)}`,
-                kind: CompletionItemKind.Method,
-                detail: `${d} (GORM dynamic finder)`,
-                documentation: {
-                    kind: MarkupKind.Markdown,
-                    value: `Finds the first \`${d}\` where \`${p}\` matches.`,
-                },
-                insertText: `findBy${capitalize(p)}($1)`,
-                insertTextFormat: 2,
-            }) as CompletionItem,
-    );
+    // Single-property finders
+    const findByItems: CompletionItem[] = props.map((p) => ({
+        label: `findBy${capitalize(p.name)}`,
+        kind: CompletionItemKind.Method,
+        detail: `${d} — single finder`,
+        documentation: {
+            kind: MarkupKind.Markdown,
+            value: `Finds the first \`${d}\` where \`${p.name}\` matches.`,
+        },
+        insertText: `findBy${capitalize(p.name)}($1)`,
+        insertTextFormat: 2,
+    }));
 
-    const findAllByItems = props.map(
-        (p) =>
-            ({
-                label: `findAllBy${capitalize(p)}`,
-                kind: CompletionItemKind.Method,
-                detail: `${d} (GORM dynamic finder)`,
-                insertText: `findAllBy${capitalize(p)}($1)`,
-                insertTextFormat: 2,
-            }) as CompletionItem,
-    );
+    const findAllByItems: CompletionItem[] = props.map((p) => ({
+        label: `findAllBy${capitalize(p.name)}`,
+        kind: CompletionItemKind.Method,
+        detail: `${d} — list finder`,
+        insertText: `findAllBy${capitalize(p.name)}($1)`,
+        insertTextFormat: 2,
+    }));
 
     const staticItems: CompletionItem[] = [
         {
@@ -575,15 +880,17 @@ function gormInstanceCompletions(domain: DomainClass): CompletionItem[] {
     return [...propItems, ...hasManyItems, ...instanceMethods];
 }
 
-// ── Service method completions ────────────────────────────────────────────────
+// ── Controller method completions ────────────────────────────────────────────
 
-function serviceMethodCompletions(
-    serviceVarName: string,
+/**
+ * Parses and returns all action methods from a controller file.
+ * Used when the user types SwaggerController.| — shows defined actions.
+ */
+function controllerMethodCompletions(
+    controllerName: string,
     project: GrailsProject,
 ): CompletionItem[] {
-    const capitalizedService =
-        serviceVarName.charAt(0).toUpperCase() + serviceVarName.slice(1);
-    const artifact = project.services.get(capitalizedService);
+    const artifact = project.controllers.get(controllerName);
     if (!artifact) return [];
 
     let src: string;
@@ -594,7 +901,73 @@ function serviceMethodCompletions(
     }
 
     const methodRe =
-        /^\s*(?:private\s+|protected\s+|public\s+)?(?:def|\w+)\s+(\w+)\s*\(/gm;
+        /^\s*(?:(?:private|protected|public)\s+)?(?:static\s+)?(?:def|\w+)\s+(\w+)\s*\(/gm;
+    const items: CompletionItem[] = [];
+    let m: RegExpExecArray | null;
+    const seen = new Set<string>();
+    const skip = new Set([
+        "class",
+        "if",
+        "for",
+        "while",
+        "switch",
+        "try",
+        "catch",
+        "return",
+        "static",
+        "final",
+        "new",
+    ]);
+
+    while ((m = methodRe.exec(src)) !== null) {
+        const methodName = m[1];
+        if (seen.has(methodName) || skip.has(methodName)) continue;
+        seen.add(methodName);
+        items.push({
+            label: methodName,
+            kind: CompletionItemKind.Method,
+            detail: `${artifact.name}.${methodName}()`,
+            insertText: `${methodName}($1)`,
+            insertTextFormat: 2,
+        });
+    }
+    return items;
+}
+
+// ── Service method completions ────────────────────────────────────────────────
+
+function serviceMethodCompletions(
+    serviceVarName: string,
+    project: GrailsProject,
+): CompletionItem[] {
+    const capitalizedService =
+        serviceVarName.charAt(0).toUpperCase() + serviceVarName.slice(1);
+
+    // Direct lookup first
+    let artifact = project.services.get(capitalizedService);
+
+    // Fallback: case-insensitive search for multi-word service names
+    if (!artifact) {
+        const lowerVar = serviceVarName.toLowerCase();
+        for (const [key, val] of project.services) {
+            if (key.toLowerCase() === lowerVar) {
+                artifact = val;
+                break;
+            }
+        }
+    }
+
+    if (!artifact) return [];
+
+    let src: string;
+    try {
+        src = fs.readFileSync(artifact.filePath, "utf8");
+    } catch {
+        return [];
+    }
+
+    const methodRe =
+        /^\s*(?:(?:private|protected|public)\s+)?(?:static\s+)?(?:def|\w+)\s+(\w+)\s*\(/gm;
     const items: CompletionItem[] = [];
     let m: RegExpExecArray | null;
     const seen = new Set<string>();
@@ -609,6 +982,9 @@ function serviceMethodCompletions(
         "try",
         "catch",
         "return",
+        "static",
+        "final",
+        "new",
     ]);
 
     while ((m = methodRe.exec(src)) !== null) {
@@ -785,6 +1161,89 @@ function serviceNamesCompletions(project: GrailsProject): CompletionItem[] {
     }));
 }
 
+/**
+ * Returns only services that are declared in the current file.
+ * A service declaration looks like:  def bookService  or  BookService bookService
+ */
+function declaredServiceCompletions(
+    docText: string,
+    project: GrailsProject,
+): CompletionItem[] {
+    const declared = new Set<string>();
+    const lines = docText.split("\n");
+
+    for (const line of lines) {
+        // "def bookService" or "BookService bookService"
+        const defMatch = /\bdef\s+(\w+Service)\b/.exec(line);
+        if (defMatch) declared.add(defMatch[1]);
+
+        const typedMatch = /\b([A-Z]\w+Service)\s+(\w+Service)\b/.exec(line);
+        if (typedMatch) declared.add(typedMatch[2]);
+    }
+
+    // Compare case-insensitively: simpleName is lowercase ("fusiontoken")
+    // but declared preserves camelCase ("fusionTokenService")
+    const declaredLower = new Set([...declared].map((d) => d.toLowerCase()));
+
+    return [...project.services.values()]
+        .filter((s) => declaredLower.has(s.simpleName + "service"))
+        .map((s) => {
+            // Recover the original camelCase injection name from declared
+            const key =
+                [...declared].find(
+                    (d) => d.toLowerCase() === s.simpleName + "service",
+                ) ?? s.simpleName + "Service";
+            return {
+                label: key,
+                kind: CompletionItemKind.Class,
+                detail: `Inject ${s.name}`,
+                insertText: key,
+                insertTextFormat: 2,
+            };
+        });
+}
+
+// ── Artifact name completions (bare word: SwaggerController|  TestService|) ──
+
+/**
+ * Suggests controller and service class names when user types a capitalized prefix.
+ * Used before the dot — e.g. "def x = Swagger" → suggests "SwaggerController".
+ * Inserting selects the name and adds "." so the user can keep typing the method.
+ */
+function artifactNameCompletions(
+    typedPrefix: string,
+    project: GrailsProject,
+): CompletionItem[] {
+    const lower = typedPrefix.toLowerCase();
+    const items: CompletionItem[] = [];
+
+    for (const [name, ctrl] of project.controllers) {
+        if (!name.toLowerCase().startsWith(lower)) continue;
+        items.push({
+            label: name,
+            kind: CompletionItemKind.Class,
+            detail: "Controller",
+            insertText: name,
+            filterText: name,
+            commitCharacters: ["."],
+        });
+    }
+
+    for (const [name, svc] of project.services) {
+        if (!name.toLowerCase().startsWith(lower)) continue;
+        items.push({
+            label: name,
+            kind: CompletionItemKind.Class,
+            detail: "Service",
+            insertText: name,
+            filterText: name,
+            commitCharacters: ["."],
+        });
+    }
+
+    return items;
+}
+
 // ─── Public entry point ───────────────────────────────────────────────────────
 
 export function getCompletions(
@@ -827,9 +1286,41 @@ export function getCompletions(
         case "render_redirect_key":
             return renderRedirectKeyCompletions();
 
+        case "domain_name":
+            return project && ctx.instanceName
+                ? domainNameCompletions(
+                      ctx.instanceName,
+                      project,
+                      ctx.importedNames,
+                  )
+                : [];
+
+        case "gorm_static_and": {
+            const domain = project?.domains.get(ctx.domainName!);
+            return domain && ctx.finderPrefix
+                ? gormStaticAndCompletions(ctx.finderPrefix, domain)
+                : [];
+        }
+
         case "gorm_static": {
             const domain = project?.domains.get(ctx.domainName!);
-            return domain ? gormStaticCompletions(domain) : [];
+            if (!domain) return [];
+            const base = gormStaticCompletions(domain);
+            // If the user has already typed a complete findByX (e.g. "findByNameA"),
+            // also include And/Or items so VS Code can filter them as typing continues.
+            // This is needed because non-trigger letters don't re-invoke the LSP.
+            if (
+                ctx.finderPrefix &&
+                /^(?:find(?:All)?By|listBy|countBy|existsBy)[A-Z]\w+$/.test(
+                    ctx.finderPrefix,
+                )
+            ) {
+                return [
+                    ...base,
+                    ...gormStaticAndCompletions(ctx.finderPrefix, domain),
+                ];
+            }
+            return base;
         }
 
         case "gorm_instance": {
@@ -837,9 +1328,19 @@ export function getCompletions(
             return domain ? gormInstanceCompletions(domain) : [];
         }
 
+        case "controller_static":
+            return project && ctx.controllerName
+                ? controllerMethodCompletions(ctx.controllerName, project)
+                : [];
+
         case "service_injection":
             return project && ctx.instanceName
                 ? serviceMethodCompletions(ctx.instanceName, project)
+                : [];
+
+        case "artifact_name":
+            return project && ctx.artifactPrefix
+                ? artifactNameCompletions(ctx.artifactPrefix, project)
                 : [];
 
         case "generic_grails":
@@ -848,8 +1349,30 @@ export function getCompletions(
                 ? inferDomainFromController(filePath, project)
                 : null;
             const base = controllerScopeCompletions(domain);
-            const services = project ? serviceNamesCompletions(project) : [];
-            return [...base, ...services];
+            const services = project
+                ? declaredServiceCompletions(doc.getText(), project)
+                : [];
+            // Only include imported domain names — not all domains in the project.
+            // Prevents showing unrelated domains when user types any uppercase letter.
+            const importedNames = project
+                ? parseImportedNames(doc.getText(), project)
+                : new Set<string>();
+            const domainNames: CompletionItem[] =
+                project && importedNames.size > 0
+                    ? [...project.domains.values()]
+                          .filter((d) => importedNames.has(d.name))
+                          .map(
+                              (d) =>
+                                  ({
+                                      label: d.name,
+                                      kind: CompletionItemKind.Class,
+                                      detail: `Domain class`,
+                                      insertText: d.name,
+                                      sortText: "0" + d.name,
+                                  }) as CompletionItem,
+                          )
+                    : [];
+            return [...base, ...services, ...domainNames];
         }
     }
 }

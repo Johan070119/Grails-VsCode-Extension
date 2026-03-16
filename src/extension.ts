@@ -9,23 +9,292 @@ import {
 } from "vscode-languageclient/node";
 
 let client: LanguageClient;
+let treeProvider: GrailsProjectProvider;
 
-// ─── Grails Project Tree ──────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Represents a node in the Grails project tree.
- * Mirrors IntelliJ's project view: shows only meaningful Grails folders
- * instead of the raw filesystem dump that VS Code's default explorer shows.
- */
+function findGrailsRoot(startPath: string): string | null {
+    let current = path.dirname(startPath);
+    for (let i = 0; i < 10; i++) {
+        if (fs.existsSync(path.join(current, "grails-app"))) return current;
+        const parent = path.dirname(current);
+        if (parent === current) break;
+        current = parent;
+    }
+    return null;
+}
+
+function getWorkspaceRoot(): string | null {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders) return null;
+    for (const f of folders) {
+        if (fs.existsSync(path.join(f.uri.fsPath, "grails-app")))
+            return f.uri.fsPath;
+    }
+    return null;
+}
+
+function detectGrailsVersion(root: string): string {
+    // Grails 3+ — gradle.properties
+    const gp = path.join(root, "gradle.properties");
+    if (fs.existsSync(gp)) {
+        const m = /grailsVersion\s*=\s*([\d.]+[-\w]*)/.exec(
+            fs.readFileSync(gp, "utf8"),
+        );
+        if (m) return m[1];
+    }
+    // Grails 3+ — build.gradle or build.gradle.kts
+    for (const bf of ["build.gradle", "build.gradle.kts"]) {
+        const p = path.join(root, bf);
+        if (!fs.existsSync(p)) continue;
+        const src = fs.readFileSync(p, "utf8");
+        const m = /grailsVersion[^=\n]*=\s*["']?([\d.]+[-\w]*)/.exec(src);
+        if (m) return m[1];
+    }
+    // Grails 2 — application.properties
+    const ap = path.join(root, "application.properties");
+    if (fs.existsSync(ap)) {
+        const m = /app\.grails\.version\s*=\s*([\d.]+[-\w]*)/.exec(
+            fs.readFileSync(ap, "utf8"),
+        );
+        if (m) return m[1];
+    }
+    return "desconocida";
+}
+
+function runGrailsCommand(cmd: string): void {
+    let t = vscode.window.terminals.find((t) => t.name === "Grails");
+    if (!t) t = vscode.window.createTerminal({ name: "Grails" });
+    t.show();
+    t.sendText(cmd);
+}
+
+// ─── Templates (compatible Grails 2–7+) ──────────────────────────────────────
+//
+// All templates use the minimal Groovy class structure that works across every
+// Grails version:
+//   Grails 2   — plain Groovy classes in grails-app/
+//   Grails 3+  — same structure, Gradle-based build
+//   Grails 4+  — same + GORM 7, Spring Boot 2
+//   Grails 5+  — same + Groovy 3, Spring Boot 2.6
+//   Grails 6+  — same + Jakarta EE (javax→jakarta), Spring Boot 3
+//   Grails 7+  — same + Groovy 4, Spring Boot 3.2
+// No version-specific imports are added — the developer adds them as needed.
+
+function pkgLine(pkg: string): string {
+    return pkg ? "package " + pkg + "\n\n" : "";
+}
+
+function controllerTemplate(name: string, pkg: string): string {
+    return (
+        pkgLine(pkg) +
+        "class " +
+        name +
+        " {\n\n" +
+        "    def index() { }\n\n" +
+        "}\n"
+    );
+}
+
+function domainTemplate(name: string, pkg: string): string {
+    return (
+        pkgLine(pkg) +
+        "class " +
+        name +
+        " {\n\n" +
+        "    static constraints = {\n" +
+        "    }\n\n" +
+        "    static mapping = {\n" +
+        "    }\n\n" +
+        "}\n"
+    );
+}
+
+// Service template varies by Grails version:
+//   Grails 2.0-2.3   -> static transactional = true  (no annotation support)
+//   Grails 2.4+      -> @Transactional (grails.transaction.Transactional)
+//   Grails 6.x-7.x+ -> @Transactional (grails.gorm.transactions.Transactional)
+function serviceTemplate(name: string, pkg: string, version?: string): string {
+    const parts = (version ?? "").split(".");
+    const major = parseInt(parts[0], 10) || 3;
+    const minor = parseInt(parts[1], 10) || 0;
+
+    // Only very old Grails 2.0-2.3 used static transactional
+    if (major === 2 && minor < 4) {
+        return (
+            pkgLine(pkg) +
+            "class " +
+            name +
+            " {\n\n" +
+            "    static transactional = true\n\n" +
+            "    def serviceMethod() {\n\n" +
+            "    }\n\n" +
+            "}\n"
+        );
+    }
+
+    if (major >= 6) {
+        return (
+            pkgLine(pkg) +
+            "import grails.gorm.transactions.Transactional\n\n" +
+            "@Transactional\n" +
+            "class " +
+            name +
+            " {\n\n" +
+            "    def serviceMethod() {\n\n" +
+            "    }\n\n" +
+            "}\n"
+        );
+    }
+
+    // Grails 2.4+, 3.x, 4.x, 5.x and unknown
+    return (
+        pkgLine(pkg) +
+        "import grails.transaction.Transactional\n\n" +
+        "@Transactional\n" +
+        "class " +
+        name +
+        " {\n\n" +
+        "    def serviceMethod() {\n\n" +
+        "    }\n\n" +
+        "}\n"
+    );
+}
+
+function taglibTemplate(name: string, pkg: string): string {
+    return (
+        pkgLine(pkg) +
+        "class " +
+        name +
+        " {\n\n" +
+        '    static namespace = "g"\n\n' +
+        "}\n"
+    );
+}
+
+function gspTemplate(viewName: string): string {
+    return (
+        "<!DOCTYPE html>\n" +
+        "<html>\n" +
+        "<head>\n" +
+        '    <meta name="layout" content="main"/>\n' +
+        "    <title>" +
+        viewName +
+        "</title>\n" +
+        "</head>\n" +
+        "<body>\n\n" +
+        "</body>\n" +
+        "</html>\n"
+    );
+}
+
+// Infer Groovy package from folder path relative to a known source root.
+// Works for both grails-app/* and src/main/groovy layouts.
+function inferPackage(folderPath: string): string {
+    const rel = folderPath.replace(/\\/g, "/");
+    const markers = [
+        "grails-app/controllers",
+        "grails-app/domain",
+        "grails-app/services",
+        "grails-app/taglib",
+        "grails-app/utils",
+        "src/main/groovy",
+    ];
+    for (const marker of markers) {
+        const idx = rel.indexOf(marker);
+        if (idx !== -1) {
+            const sub = rel.slice(idx + marker.length).replace(/^\//, "");
+            return sub ? sub.replace(/\//g, ".") : "";
+        }
+    }
+    return "";
+}
+
+// ─── File helpers ─────────────────────────────────────────────────────────────
+
+async function writeNewFile(
+    folder: string,
+    fileName: string,
+    content: string,
+): Promise<void> {
+    const full = path.join(folder, fileName);
+    if (fs.existsSync(full)) {
+        vscode.window.showWarningMessage("Ya existe: " + fileName);
+        return;
+    }
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(full, content, "utf8");
+    const doc = await vscode.workspace.openTextDocument(full);
+    await vscode.window.showTextDocument(doc);
+}
+
+async function createArtefact(
+    item: GrailsTreeItem | undefined,
+    prompt: string,
+    suffix: string,
+    tplFn: (name: string, pkg: string, version?: string) => string,
+): Promise<void> {
+    const folder = item?.node.fsPath;
+    if (!folder) return;
+
+    const input = await vscode.window.showInputBox({
+        prompt,
+        placeHolder: "Book  o  com/example/Book",
+        validateInput: (v) =>
+            v.trim() ? null : "El nombre no puede estar vacio",
+    });
+    if (!input) return;
+
+    const parts = input
+        .replace(/\\/g, "/")
+        .split("/")
+        .filter((p) => p.length > 0);
+    const rawName = parts[parts.length - 1];
+    const sub = parts.slice(0, -1).join("/");
+    const className = rawName.endsWith(suffix) ? rawName : rawName + suffix;
+    const targetDir = sub ? path.join(folder, sub) : folder;
+    const pkg = inferPackage(targetDir);
+    const version = treeProvider?.getVersion() ?? "";
+
+    await writeNewFile(
+        targetDir,
+        className + ".groovy",
+        tplFn(className, pkg, version),
+    );
+}
+
+// ─── Node types ───────────────────────────────────────────────────────────────
+
+// contextValue used in package.json menus "when" clauses.
+// Specific folder types get a unique value; generic subfolders get "grailsFolder".
+// Files get "grailsFile".
+// This lets us show the right primary action per folder type.
+type NodeKind =
+    | "version-label"
+    | "root-group"
+    | "grailsFolder_controllers"
+    | "grailsFolder_domain"
+    | "grailsFolder_services"
+    | "grailsFolder_views"
+    | "grailsFolder_taglib"
+    | "grailsFolder_conf"
+    | "grailsFolder_i18n"
+    | "grailsFolder_utils"
+    | "grailsFolder_assets"
+    | "grailsFolder"
+    | "grailsFile";
+
 interface GrailsNode {
     label: string;
     fsPath: string;
-    kind: "root-group" | "folder" | "file";
+    kind: NodeKind;
     iconId: string;
-    children?: GrailsNode[];
+    description?: string;
 }
 
-class GrailsTreeItem extends vscode.TreeItem {
+// ─── Tree item ────────────────────────────────────────────────────────────────
+
+export class GrailsTreeItem extends vscode.TreeItem {
     constructor(
         public readonly node: GrailsNode,
         public readonly collapsibleState: vscode.TreeItemCollapsibleState,
@@ -33,189 +302,117 @@ class GrailsTreeItem extends vscode.TreeItem {
         super(node.label, collapsibleState);
         this.resourceUri = vscode.Uri.file(node.fsPath);
         this.iconPath = new vscode.ThemeIcon(node.iconId);
+        this.contextValue = node.kind;
+        if (node.description) this.description = node.description;
 
-        if (node.kind === "file") {
+        if (node.kind === "grailsFile") {
             this.command = {
                 command: "vscode.open",
-                title: "Open file",
+                title: "Open",
                 arguments: [vscode.Uri.file(node.fsPath)],
             };
-            this.contextValue = "grailsFile";
-        } else {
-            this.contextValue = "grailsFolder";
         }
     }
 }
 
-class GrailsProjectProvider implements vscode.TreeDataProvider<GrailsTreeItem> {
-    private _onDidChangeTreeData = new vscode.EventEmitter<
-        GrailsTreeItem | undefined
-    >();
-    readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+// ─── Tree provider ────────────────────────────────────────────────────────────
 
+class GrailsProjectProvider implements vscode.TreeDataProvider<GrailsTreeItem> {
+    private _onChange = new vscode.EventEmitter<GrailsTreeItem | undefined>();
+    readonly onDidChangeTreeData = this._onChange.event;
     private root: string | null = null;
+    private version = "";
 
     constructor() {
-        // Watch for workspace folder changes
         vscode.workspace.onDidChangeWorkspaceFolders(() => this.refresh());
         this.detectRoot();
     }
 
     refresh(): void {
         this.detectRoot();
-        this._onDidChangeTreeData.fire(undefined);
+        this._onChange.fire(undefined);
+    }
+    getRoot(): string | null {
+        return this.root;
+    }
+    getVersion(): string {
+        return this.version;
     }
 
     private detectRoot(): void {
-        const folders = vscode.workspace.workspaceFolders;
-        if (!folders || folders.length === 0) {
-            this.root = null;
-            return;
-        }
-
-        for (const folder of folders) {
-            const p = folder.uri.fsPath;
-            if (fs.existsSync(path.join(p, "grails-app"))) {
-                this.root = p;
-                return;
-            }
-        }
-        this.root = null;
+        this.root = getWorkspaceRoot();
+        this.version = this.root ? detectGrailsVersion(this.root) : "";
     }
 
-    getTreeItem(element: GrailsTreeItem): vscode.TreeItem {
-        return element;
+    getTreeItem(el: GrailsTreeItem): vscode.TreeItem {
+        return el;
     }
 
-    getChildren(element?: GrailsTreeItem): GrailsTreeItem[] {
+    getChildren(el?: GrailsTreeItem): GrailsTreeItem[] {
         if (!this.root) return [];
-
-        // Top level — the fixed "groups" that mirror IntelliJ's project view
-        if (!element) {
-            return this.buildTopLevel(this.root);
-        }
-
-        // Children of a folder node
-        if (
-            element.node.kind === "folder" ||
-            element.node.kind === "root-group"
-        ) {
-            return this.buildFolderChildren(element.node.fsPath);
-        }
-
-        return [];
+        if (!el) return this.topLevel(this.root);
+        if (el.node.kind === "version-label") return [];
+        return this.children(el.node.fsPath);
     }
 
-    // ── Top-level structure ───────────────────────────────────────────────────
-    // Mirrors IntelliJ Grails project view exactly:
-    //   grails-app
-    //     ├─ controllers
-    //     ├─ domain
-    //     ├─ services
-    //     ├─ views
-    //     ├─ conf
-    //     ├─ i18n
-    //     ├─ taglib
-    //     └─ utils
-    //   src
-    //     ├─ main/groovy
-    //     └─ main/resources
-    //   web-app (or src/main/webapp)
-    //   test
-
-    private buildTopLevel(root: string): GrailsTreeItem[] {
+    private topLevel(root: string): GrailsTreeItem[] {
         const items: GrailsTreeItem[] = [];
 
-        // ── grails-app ───────────────────────────────────────────────────────
-        const grailsAppGroups: Array<{
-            label: string;
-            rel: string;
-            icon: string;
-        }> = [
-            {
-                label: "controllers",
-                rel: "grails-app/controllers",
-                icon: "symbol-class",
-            },
-            { label: "domain", rel: "grails-app/domain", icon: "database" },
-            {
-                label: "services",
-                rel: "grails-app/services",
-                icon: "symbol-interface",
-            },
-            { label: "views", rel: "grails-app/views", icon: "file-code" },
-            { label: "conf", rel: "grails-app/conf", icon: "settings-gear" },
-            { label: "i18n", rel: "grails-app/i18n", icon: "globe" },
-            { label: "taglib", rel: "grails-app/taglib", icon: "tag" },
-            { label: "utils", rel: "grails-app/utils", icon: "tools" },
-        ];
-
-        const grailsAppChildren: GrailsTreeItem[] = [];
-        for (const g of grailsAppGroups) {
-            const fullPath = path.join(root, g.rel);
-            if (!fs.existsSync(fullPath)) continue;
-            grailsAppChildren.push(
-                this.makeFolder(g.label, fullPath, g.icon, "folder"),
-            );
-        }
-
-        if (grailsAppChildren.length > 0) {
-            const grailsAppItem = new GrailsTreeItem(
+        // Version badge at top
+        items.push(
+            new GrailsTreeItem(
                 {
-                    label: "grails-app",
-                    fsPath: path.join(root, "grails-app"),
-                    kind: "root-group",
+                    label: "Grails " + this.version,
+                    fsPath: root,
+                    kind: "version-label",
                     iconId: "package",
+                    description: "version actual",
                 },
-                vscode.TreeItemCollapsibleState.Expanded,
+                vscode.TreeItemCollapsibleState.None,
+            ),
+        );
+
+        // grails-app folder
+        const ga = path.join(root, "grails-app");
+        if (fs.existsSync(ga)) {
+            items.push(
+                new GrailsTreeItem(
+                    {
+                        label: "grails-app",
+                        fsPath: ga,
+                        kind: "root-group",
+                        iconId: "package",
+                    },
+                    vscode.TreeItemCollapsibleState.Expanded,
+                ),
             );
-            // Inject children so getChildren() works via folder listing
-            items.push(grailsAppItem);
         }
 
-        // ── src ──────────────────────────────────────────────────────────────
-        const srcGroups = [
-            {
-                label: "main/groovy",
-                rel: "src/main/groovy",
-                icon: "symbol-method",
-            },
-            {
-                label: "main/resources",
-                rel: "src/main/resources",
-                icon: "file-binary",
-            },
-            { label: "test/groovy", rel: "src/test/groovy", icon: "beaker" },
-        ];
-        for (const g of srcGroups) {
-            const fullPath = path.join(root, g.rel);
-            if (!fs.existsSync(fullPath)) continue;
-            items.push(this.makeFolder(g.label, fullPath, g.icon, "folder"));
+        // src dirs (Grails 3+)
+        for (const [rel, icon] of [
+            ["src/main/groovy", "symbol-method"],
+            ["src/main/resources", "file-binary"],
+            ["src/test/groovy", "beaker"],
+            ["src/integration-test/groovy", "beaker"],
+        ] as [string, string][]) {
+            const p = path.join(root, rel);
+            if (fs.existsSync(p))
+                items.push(this.mkFolder(rel, p, icon, "grailsFolder"));
         }
 
-        // ── web-app (Grails 2/3 style) ────────────────────────────────────
-        const webApp = path.join(root, "web-app");
-        if (fs.existsSync(webApp)) {
-            items.push(this.makeFolder("web-app", webApp, "browser", "folder"));
-        }
-        // Grails 3+ style
-        const webapp = path.join(root, "src/main/webapp");
-        if (fs.existsSync(webapp)) {
-            items.push(this.makeFolder("webapp", webapp, "browser", "folder"));
-        }
-
-        // ── test ─────────────────────────────────────────────────────────────
-        const testDir = path.join(root, "test");
-        if (fs.existsSync(testDir)) {
-            items.push(this.makeFolder("test", testDir, "beaker", "folder"));
+        // web-app (Grails 2) or src/main/webapp (Grails 3+)
+        for (const wa of ["web-app", "src/main/webapp"]) {
+            const p = path.join(root, wa);
+            if (fs.existsSync(p)) {
+                items.push(this.mkFolder(wa, p, "browser", "grailsFolder"));
+                break;
+            }
         }
 
         return items;
     }
 
-    // ── Folder children ───────────────────────────────────────────────────────
-
-    private buildFolderChildren(folderPath: string): GrailsTreeItem[] {
+    private children(folderPath: string): GrailsTreeItem[] {
         let entries: fs.Dirent[];
         try {
             entries = fs.readdirSync(folderPath, { withFileTypes: true });
@@ -226,38 +423,61 @@ class GrailsProjectProvider implements vscode.TreeDataProvider<GrailsTreeItem> {
         const folders: GrailsTreeItem[] = [];
         const files: GrailsTreeItem[] = [];
 
-        for (const entry of entries) {
-            // Skip hidden files and build artifacts
-            if (entry.name.startsWith(".")) continue;
-            if (
-                entry.name === "node_modules" ||
-                entry.name === "build" ||
-                entry.name === ".gradle"
-            )
-                continue;
-
-            const fullPath = path.join(folderPath, entry.name);
-
-            if (entry.isDirectory()) {
+        for (const e of entries) {
+            if (e.name.startsWith(".")) continue;
+            if (["build", ".gradle", "node_modules"].includes(e.name)) continue;
+            const full = path.join(folderPath, e.name);
+            if (e.isDirectory()) {
                 folders.push(
-                    this.makeFolder(entry.name, fullPath, "folder", "folder"),
+                    this.mkFolder(
+                        e.name,
+                        full,
+                        this.dirIcon(e.name),
+                        this.dirKind(e.name),
+                    ),
                 );
             } else {
-                files.push(this.makeFile(entry.name, fullPath));
+                files.push(this.mkFile(e.name, full));
             }
         }
-
-        // Folders first, then files — same as IntelliJ
         return [...folders, ...files];
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    private dirKind(name: string): NodeKind {
+        const m: Record<string, NodeKind> = {
+            controllers: "grailsFolder_controllers",
+            domain: "grailsFolder_domain",
+            services: "grailsFolder_services",
+            views: "grailsFolder_views",
+            taglib: "grailsFolder_taglib",
+            conf: "grailsFolder_conf",
+            i18n: "grailsFolder_i18n",
+            utils: "grailsFolder_utils",
+            assets: "grailsFolder_assets",
+        };
+        return m[name] ?? "grailsFolder";
+    }
 
-    private makeFolder(
+    private dirIcon(name: string): string {
+        const m: Record<string, string> = {
+            controllers: "symbol-class",
+            domain: "database",
+            services: "symbol-interface",
+            views: "file-code",
+            conf: "settings-gear",
+            i18n: "globe",
+            taglib: "tag",
+            utils: "tools",
+            assets: "file-media",
+        };
+        return m[name] ?? "folder";
+    }
+
+    private mkFolder(
         label: string,
         fsPath: string,
         iconId: string,
-        kind: GrailsNode["kind"],
+        kind: NodeKind,
     ): GrailsTreeItem {
         return new GrailsTreeItem(
             { label, fsPath, kind, iconId },
@@ -265,167 +485,443 @@ class GrailsProjectProvider implements vscode.TreeDataProvider<GrailsTreeItem> {
         );
     }
 
-    private makeFile(label: string, fsPath: string): GrailsTreeItem {
-        const icon = this.iconForFile(label);
+    private mkFile(label: string, fsPath: string): GrailsTreeItem {
+        const icon = label.endsWith(".groovy")
+            ? "symbol-class"
+            : label.endsWith(".gsp")
+              ? "file-code"
+              : label.endsWith(".yml") || label.endsWith(".yaml")
+                ? "settings"
+                : label.endsWith(".xml")
+                  ? "file-code"
+                  : label.endsWith(".properties")
+                    ? "list-unordered"
+                    : "file";
         return new GrailsTreeItem(
-            { label, fsPath, kind: "file", iconId: icon },
+            { label, fsPath, kind: "grailsFile", iconId: icon },
             vscode.TreeItemCollapsibleState.None,
         );
     }
+}
 
-    private iconForFile(name: string): string {
-        if (name.endsWith(".groovy")) return "symbol-class";
-        if (name.endsWith(".gsp")) return "file-code";
-        if (name.endsWith(".yml") || name.endsWith(".yaml")) return "settings";
-        if (name.endsWith(".xml")) return "file-code";
-        if (name.endsWith(".properties")) return "list-unordered";
-        if (name.endsWith(".java")) return "symbol-class";
-        if (name.endsWith(".sql")) return "database";
-        return "file";
+// ─── GSP CodeLens ─────────────────────────────────────────────────────────────
+
+class GrailsGspCodeLensProvider implements vscode.CodeLensProvider {
+    provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
+        const fp = document.uri.fsPath;
+        if (!fp.endsWith("Controller.groovy")) return [];
+
+        const root = findGrailsRoot(fp);
+        if (!root) return [];
+
+        const ctrlName = path.basename(fp, "Controller.groovy").toLowerCase();
+        const viewsDir = path.join(root, "grails-app", "views", ctrlName);
+        if (!fs.existsSync(viewsDir)) return [];
+
+        const lenses: vscode.CodeLens[] = [];
+        const docLines = document.getText().split("\n");
+        const re = /^\s*def\s+(\w+)\s*(?:\(|=\s*[{])/;
+
+        for (let i = 0; i < docLines.length; i++) {
+            const m = re.exec(docLines[i]);
+            if (!m) continue;
+            const gsp = path.join(viewsDir, m[1] + ".gsp");
+            const tpl = path.join(viewsDir, "_" + m[1] + ".gsp");
+            const resolved = fs.existsSync(gsp)
+                ? gsp
+                : fs.existsSync(tpl)
+                  ? tpl
+                  : null;
+            if (!resolved) continue;
+
+            lenses.push(
+                new vscode.CodeLens(
+                    new vscode.Range(i, 0, i, docLines[i].length),
+                    {
+                        title: "$(file-code) " + path.basename(resolved),
+                        command: "vscode.open",
+                        arguments: [vscode.Uri.file(resolved)],
+                        tooltip: "Abrir " + path.basename(resolved),
+                    },
+                ),
+            );
+        }
+        return lenses;
     }
 }
 
-// ─── Grails CLI commands ──────────────────────────────────────────────────────
+// ─── Package refactor ─────────────────────────────────────────────────────────
 
 /**
- * Runs a Grails CLI command in the integrated terminal.
- * Reuses an existing "Grails" terminal if available.
+ * Scans all .groovy files inside a folder tree and updates the `package` declaration
+ * when it contains oldPkg (or a sub-package of it).
+ *
+ * Example: renaming "apiportalsocios/security" to "apiportalsocios/auth"
+ *   package apiportalsocios.security       → package apiportalsocios.auth
+ *   package apiportalsocios.security.util  → package apiportalsocios.auth.util
+ *
+ * Only modifies the first non-empty, non-comment line that starts with "package ".
+ * All other content is left untouched.
  */
-function runGrailsCommand(command: string): void {
-    const terminals = vscode.window.terminals;
-    let terminal = terminals.find((t) => t.name === "Grails");
-    if (!terminal) {
-        terminal = vscode.window.createTerminal({ name: "Grails" });
+function refactorPackagesInFolder(
+    folderPath: string,
+    oldPkg: string,
+    newPkg: string,
+): number {
+    if (!oldPkg) return 0;
+    let count = 0;
+
+    function walk(dir: string): void {
+        let entries: fs.Dirent[];
+        try {
+            entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch {
+            return;
+        }
+
+        for (const e of entries) {
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) {
+                walk(full);
+                continue;
+            }
+            if (!e.name.endsWith(".groovy")) continue;
+
+            const src = fs.readFileSync(full, "utf8");
+            const lines = src.split("\n");
+
+            // Find the package line (first non-empty non-comment line that is "package ...")
+            let pkgLineIdx = -1;
+            for (let i = 0; i < lines.length; i++) {
+                const t = lines[i].trim();
+                if (
+                    t === "" ||
+                    t.startsWith("//") ||
+                    t.startsWith("/*") ||
+                    t.startsWith("*")
+                )
+                    continue;
+                if (t.startsWith("package ")) {
+                    pkgLineIdx = i;
+                }
+                break;
+            }
+            if (pkgLineIdx === -1) continue;
+
+            const currentPkg = lines[pkgLineIdx]
+                .replace(/^package\s+/, "")
+                .trim();
+
+            // Update if current package equals oldPkg or starts with oldPkg + "."
+            let updatedPkg: string | null = null;
+            if (currentPkg === oldPkg) {
+                updatedPkg = newPkg;
+            } else if (currentPkg.startsWith(oldPkg + ".")) {
+                updatedPkg = newPkg + currentPkg.slice(oldPkg.length);
+            }
+
+            if (updatedPkg !== null) {
+                lines[pkgLineIdx] = "package " + updatedPkg;
+                fs.writeFileSync(full, lines.join("\n"), "utf8");
+                count++;
+            }
+        }
     }
-    terminal.show();
-    terminal.sendText(command);
+
+    walk(folderPath);
+    return count;
 }
 
-function registerCliCommands(context: vscode.ExtensionContext): void {
-    // grails run-app
-    context.subscriptions.push(
-        vscode.commands.registerCommand("grails.runApp", () => {
-            runGrailsCommand("grails run-app");
-        }),
+function registerContextCommands(ctx: vscode.ExtensionContext): void {
+    // ── Create controller ─────────────────────────────────────────────────────
+    ctx.subscriptions.push(
+        vscode.commands.registerCommand(
+            "grails.ctx.createController",
+            async (item?: GrailsTreeItem) => {
+                await createArtefact(
+                    item,
+                    "Nombre del controller (ej. Book o com/example/Book)",
+                    "Controller",
+                    controllerTemplate,
+                );
+            },
+        ),
     );
 
-    // grails run-app --debug
-    context.subscriptions.push(
-        vscode.commands.registerCommand("grails.runAppDebug", () => {
-            runGrailsCommand("grails run-app --debug-jvm");
-        }),
+    // ── Create domain ─────────────────────────────────────────────────────────
+    ctx.subscriptions.push(
+        vscode.commands.registerCommand(
+            "grails.ctx.createDomain",
+            async (item?: GrailsTreeItem) => {
+                await createArtefact(
+                    item,
+                    "Nombre del domain class (ej. Book o com/example/Book)",
+                    "",
+                    domainTemplate,
+                );
+            },
+        ),
     );
 
-    // grails stop-app
-    context.subscriptions.push(
-        vscode.commands.registerCommand("grails.stopApp", () => {
-            runGrailsCommand("grails stop-app");
-        }),
+    // ── Create service ────────────────────────────────────────────────────────
+    ctx.subscriptions.push(
+        vscode.commands.registerCommand(
+            "grails.ctx.createService",
+            async (item?: GrailsTreeItem) => {
+                await createArtefact(
+                    item,
+                    "Nombre del service (ej. Book o com/example/Book)",
+                    "Service",
+                    serviceTemplate,
+                );
+            },
+        ),
     );
 
-    // grails test-app
-    context.subscriptions.push(
-        vscode.commands.registerCommand("grails.testApp", () => {
-            runGrailsCommand("grails test-app");
-        }),
+    // ── Create taglib ─────────────────────────────────────────────────────────
+    ctx.subscriptions.push(
+        vscode.commands.registerCommand(
+            "grails.ctx.createTagLib",
+            async (item?: GrailsTreeItem) => {
+                await createArtefact(
+                    item,
+                    "Nombre del TagLib (ej. Book)",
+                    "TagLib",
+                    taglibTemplate,
+                );
+            },
+        ),
     );
 
-    // grails create-controller (asks for name)
-    context.subscriptions.push(
-        vscode.commands.registerCommand("grails.createController", async () => {
-            const name = await vscode.window.showInputBox({
-                prompt: "Controller name (e.g. Book)",
-                placeHolder: "Book",
-            });
-            if (name) runGrailsCommand(`grails create-controller ${name}`);
-        }),
+    // ── Create GSP view ───────────────────────────────────────────────────────
+    ctx.subscriptions.push(
+        vscode.commands.registerCommand(
+            "grails.ctx.createView",
+            async (item?: GrailsTreeItem) => {
+                const folder = item?.node.fsPath;
+                if (!folder) return;
+
+                const input = await vscode.window.showInputBox({
+                    prompt: "Nombre de la vista (ej. show  o  sub/show)",
+                    placeHolder: "show.gsp",
+                    validateInput: (v) =>
+                        v.trim() ? null : "El nombre no puede estar vacío",
+                });
+                if (!input) return;
+
+                const parts = input
+                    .replace(/\\/g, "/")
+                    .split("/")
+                    .filter((p) => p.length > 0);
+                const rawName = parts[parts.length - 1];
+                const sub = parts.slice(0, -1).join("/");
+                const fileName = rawName.endsWith(".gsp")
+                    ? rawName
+                    : rawName + ".gsp";
+                const viewName = rawName.replace(/\.gsp$/, "");
+                const targetDir = sub ? path.join(folder, sub) : folder;
+
+                await writeNewFile(targetDir, fileName, gspTemplate(viewName));
+            },
+        ),
     );
 
-    // grails create-domain-class
-    context.subscriptions.push(
-        vscode.commands.registerCommand("grails.createDomain", async () => {
-            const name = await vscode.window.showInputBox({
-                prompt: "Domain class name (e.g. Book)",
-                placeHolder: "Book",
-            });
-            if (name) runGrailsCommand(`grails create-domain-class ${name}`);
-        }),
+    // ── Create folder ─────────────────────────────────────────────────────────
+    ctx.subscriptions.push(
+        vscode.commands.registerCommand(
+            "grails.ctx.createFolder",
+            async (item?: GrailsTreeItem) => {
+                const base = item?.node.fsPath ?? getWorkspaceRoot();
+                if (!base) return;
+
+                const name = await vscode.window.showInputBox({
+                    prompt: "Nombre de la carpeta (puede incluir sub/carpetas)",
+                    validateInput: (v) =>
+                        v.trim() ? null : "El nombre no puede estar vacío",
+                });
+                if (!name) return;
+
+                const newPath = path.join(base, name.replace(/\\/g, "/"));
+                if (fs.existsSync(newPath)) {
+                    vscode.window.showWarningMessage("Ya existe: " + name);
+                    return;
+                }
+                fs.mkdirSync(newPath, { recursive: true });
+                treeProvider.refresh();
+                vscode.window.showInformationMessage("Carpeta creada: " + name);
+            },
+        ),
     );
 
-    // grails create-service
-    context.subscriptions.push(
-        vscode.commands.registerCommand("grails.createService", async () => {
-            const name = await vscode.window.showInputBox({
-                prompt: "Service name (e.g. Book)",
-                placeHolder: "Book",
-            });
-            if (name) runGrailsCommand(`grails create-service ${name}`);
-        }),
+    // ── Create generic file ───────────────────────────────────────────────────
+    ctx.subscriptions.push(
+        vscode.commands.registerCommand(
+            "grails.ctx.createFile",
+            async (item?: GrailsTreeItem) => {
+                const base = item?.node.fsPath ?? getWorkspaceRoot();
+                if (!base) return;
+
+                const input = await vscode.window.showInputBox({
+                    prompt: "Nombre con extensión (ej. Config.groovy, index.gsp, messages.properties)",
+                    validateInput: (v) => {
+                        if (!v.trim()) return "El nombre no puede estar vacío";
+                        if (!v.includes("."))
+                            return "Incluye la extensión (ej. .groovy, .gsp, .yml)";
+                        return null;
+                    },
+                });
+                if (!input) return;
+
+                const parts = input
+                    .replace(/\\/g, "/")
+                    .split("/")
+                    .filter((p) => p.length > 0);
+                const fileName = parts[parts.length - 1];
+                const sub = parts.slice(0, -1).join("/");
+                const targetDir = sub ? path.join(base, sub) : base;
+
+                await writeNewFile(targetDir, fileName, "");
+            },
+        ),
     );
 
-    // grails generate-all (scaffold)
-    context.subscriptions.push(
-        vscode.commands.registerCommand("grails.generateAll", async () => {
-            const name = await vscode.window.showInputBox({
-                prompt: "Domain class to scaffold (e.g. com.example.Book)",
-                placeHolder: "Book",
-            });
-            if (name) runGrailsCommand(`grails generate-all ${name}`);
-        }),
+    // ── Rename file or folder (with package refactor for folders) ────────────
+    ctx.subscriptions.push(
+        vscode.commands.registerCommand(
+            "grails.ctx.rename",
+            async (item?: GrailsTreeItem) => {
+                const oldPath = item?.node.fsPath;
+                if (!oldPath) return;
+
+                const oldName = path.basename(oldPath);
+                const isDir = fs.statSync(oldPath).isDirectory();
+
+                const newName = await vscode.window.showInputBox({
+                    prompt: isDir ? "Renombrar carpeta" : "Renombrar archivo",
+                    value: oldName,
+                    validateInput: (v) => {
+                        if (!v.trim()) return "El nombre no puede estar vacío";
+                        if (v === oldName) return "El nombre es el mismo";
+                        return null;
+                    },
+                });
+                if (!newName) return;
+
+                const newPath = path.join(path.dirname(oldPath), newName);
+                if (fs.existsSync(newPath)) {
+                    vscode.window.showWarningMessage("Ya existe: " + newName);
+                    return;
+                }
+
+                // For folders: offer to refactor package declarations inside
+                if (isDir) {
+                    const oldPkg = inferPackage(oldPath);
+                    const newPkg = inferPackage(
+                        newPath.replace(oldPath, newPath),
+                    );
+
+                    // Rename first, then refactor packages inside the renamed folder
+                    fs.renameSync(oldPath, newPath);
+
+                    // Compute the new package based on the renamed path
+                    const computedNewPkg = inferPackage(newPath);
+
+                    if (oldPkg && computedNewPkg && oldPkg !== computedNewPkg) {
+                        const answer =
+                            await vscode.window.showInformationMessage(
+                                "Actualizar declaraciones package en los archivos .groovy?",
+                                { modal: false },
+                                "Actualizar",
+                                "No",
+                            );
+                        if (answer === "Actualizar") {
+                            const count = refactorPackagesInFolder(
+                                newPath,
+                                oldPkg,
+                                computedNewPkg,
+                            );
+                            vscode.window.showInformationMessage(
+                                "Package actualizado en " +
+                                    count +
+                                    " archivo(s): " +
+                                    oldPkg +
+                                    " → " +
+                                    computedNewPkg,
+                            );
+                        }
+                    }
+                } else {
+                    fs.renameSync(oldPath, newPath);
+                }
+
+                treeProvider.refresh();
+            },
+        ),
     );
 
-    // grails clean
-    context.subscriptions.push(
-        vscode.commands.registerCommand("grails.clean", () => {
-            runGrailsCommand("grails clean");
-        }),
-    );
+    // ── Delete file or folder ─────────────────────────────────────────────────
+    ctx.subscriptions.push(
+        vscode.commands.registerCommand(
+            "grails.ctx.delete",
+            async (item?: GrailsTreeItem) => {
+                const targetPath = item?.node.fsPath;
+                if (!targetPath) return;
 
-    // Refresh tree view
-    context.subscriptions.push(
-        vscode.commands.registerCommand("grails.refreshTree", () => {
-            treeProvider.refresh();
-        }),
+                const name = path.basename(targetPath);
+                const isDir = fs.statSync(targetPath).isDirectory();
+                const kind = isDir ? "carpeta" : "archivo";
+
+                const answer = await vscode.window.showWarningMessage(
+                    "Eliminar " + kind + ": " + name + "?",
+                    { modal: true },
+                    "Eliminar",
+                );
+                if (answer !== "Eliminar") return;
+
+                if (isDir) {
+                    fs.rmSync(targetPath, { recursive: true, force: true });
+                } else {
+                    fs.unlinkSync(targetPath);
+                }
+                treeProvider.refresh();
+            },
+        ),
     );
 }
 
-// ─── Tree provider instance (needs to be accessible from commands) ────────────
-let treeProvider: GrailsProjectProvider;
-
-// ─── Extension activate ───────────────────────────────────────────────────────
+// ─── Activate ─────────────────────────────────────────────────────────────────
 
 export function activate(context: vscode.ExtensionContext) {
-    // ── LSP client ────────────────────────────────────────────────────────────
+    // LSP client
     const serverModule = context.asAbsolutePath(
         path.join("server", "dist", "server.js"),
     );
-    const serverOptions: ServerOptions = {
-        run: { module: serverModule, transport: TransportKind.ipc },
-        debug: { module: serverModule, transport: TransportKind.ipc },
-    };
-    const clientOptions: LanguageClientOptions = {
-        documentSelector: [
-            { scheme: "file", language: "groovy" },
-            { scheme: "file", language: "gsp" },
-        ],
-    };
     client = new LanguageClient(
         "grailsLanguageServer",
         "Grails Language Server",
-        serverOptions,
-        clientOptions,
+        {
+            run: { module: serverModule, transport: TransportKind.ipc },
+            debug: { module: serverModule, transport: TransportKind.ipc },
+        } as ServerOptions,
+        {
+            documentSelector: [
+                { scheme: "file", language: "groovy" },
+                { scheme: "file", language: "gsp" },
+            ],
+        } as LanguageClientOptions,
     );
     client.start();
 
-    // ── Project tree view ─────────────────────────────────────────────────────
+    // Project tree
     treeProvider = new GrailsProjectProvider();
-    const treeView = vscode.window.createTreeView("grailsProjectExplorer", {
-        treeDataProvider: treeProvider,
-        showCollapseAll: true,
-    });
-    context.subscriptions.push(treeView);
+    context.subscriptions.push(
+        vscode.window.createTreeView("grailsProjectExplorer", {
+            treeDataProvider: treeProvider,
+            showCollapseAll: true,
+        }),
+    );
 
-    // Auto-refresh when files change inside grails-app
+    // Auto-refresh on file changes
     const watcher = vscode.workspace.createFileSystemWatcher(
         new vscode.RelativePattern(
             vscode.workspace.workspaceFolders?.[0] ?? "",
@@ -436,8 +932,48 @@ export function activate(context: vscode.ExtensionContext) {
     watcher.onDidDelete(() => treeProvider.refresh());
     context.subscriptions.push(watcher);
 
-    // ── CLI commands ──────────────────────────────────────────────────────────
-    registerCliCommands(context);
+    // GSP CodeLens
+    context.subscriptions.push(
+        vscode.languages.registerCodeLensProvider(
+            { scheme: "file", language: "groovy" },
+            new GrailsGspCodeLensProvider(),
+        ),
+    );
+
+    // CLI commands
+    const cli: [string, () => void][] = [
+        ["grails.runApp", () => runGrailsCommand("grails run-app")],
+        [
+            "grails.runAppDebug",
+            () => runGrailsCommand("grails run-app --debug-jvm"),
+        ],
+        ["grails.stopApp", () => runGrailsCommand("grails stop-app")],
+        ["grails.testApp", () => runGrailsCommand("grails test-app")],
+        ["grails.clean", () => runGrailsCommand("grails clean")],
+        ["grails.compile", () => runGrailsCommand("grails compile")],
+        ["grails.refreshTree", () => treeProvider.refresh()],
+    ];
+    for (const [cmd, fn] of cli) {
+        context.subscriptions.push(vscode.commands.registerCommand(cmd, fn));
+    }
+
+    // Context menu commands
+    registerContextCommands(context);
+
+    // Status bar
+    const root = getWorkspaceRoot();
+    if (root) {
+        const ver = detectGrailsVersion(root);
+        const sb = vscode.window.createStatusBarItem(
+            vscode.StatusBarAlignment.Left,
+            100,
+        );
+        sb.text = "$(package) Grails " + ver;
+        sb.tooltip = "Grails — click para correr la app";
+        sb.command = "grails.runApp";
+        sb.show();
+        context.subscriptions.push(sb);
+    }
 }
 
 export function deactivate(): Thenable<void> | undefined {

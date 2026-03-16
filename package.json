@@ -2,7 +2,7 @@
     "name": "grails-extension-vscode",
     "displayName": "Grails Support For VS Code",
     "description": "Grails language support for VS Code — navigation, completion, project tree, CLI",
-    "version": "0.3.1",
+    "version": "0.4.0",
     "publisher": "JohanMixtegaCisneros",
     "repository": {
         "type": "git",
@@ -70,8 +70,8 @@
             "activitybar": [
                 {
                     "id": "grails-explorer",
-                    "title": "Grails",
-                    "icon": "$(package)"
+                    "title": "Grails Project",
+                    "icon": "images/grails-icon.svg"
                 }
             ]
         },
@@ -79,66 +79,95 @@
             "grails-explorer": [
                 {
                     "id": "grailsProjectExplorer",
-                    "name": "Project",
-                    "when": "workspaceContains:grails-app"
+                    "name": "Project Structure"
                 }
             ]
         },
         "commands": [
             {
                 "command": "grails.runApp",
-                "title": "Run App",
+                "title": "Correr Aplicación",
                 "category": "Grails",
                 "icon": "$(play)"
             },
             {
-                "command": "grails.runAppDebug",
-                "title": "Run App (Debug)",
-                "category": "Grails",
-                "icon": "$(debug-alt)"
-            },
-            {
                 "command": "grails.stopApp",
-                "title": "Stop App",
+                "title": "Detener",
                 "category": "Grails",
                 "icon": "$(debug-stop)"
             },
             {
-                "command": "grails.testApp",
-                "title": "Run Tests",
-                "category": "Grails",
-                "icon": "$(beaker)"
-            },
-            {
                 "command": "grails.clean",
-                "title": "Clean",
-                "category": "Grails"
+                "title": "Limpiar",
+                "category": "Grails",
+                "icon": "$(trash)"
             },
             {
-                "command": "grails.createController",
-                "title": "Create Controller",
-                "category": "Grails"
-            },
-            {
-                "command": "grails.createDomain",
-                "title": "Create Domain Class",
-                "category": "Grails"
-            },
-            {
-                "command": "grails.createService",
-                "title": "Create Service",
-                "category": "Grails"
-            },
-            {
-                "command": "grails.generateAll",
-                "title": "Generate All (Scaffold)",
-                "category": "Grails"
+                "command": "grails.compile",
+                "title": "Compilar",
+                "category": "Grails",
+                "icon": "$(tools)"
             },
             {
                 "command": "grails.refreshTree",
-                "title": "Refresh",
+                "title": "Refrescar",
                 "category": "Grails",
                 "icon": "$(refresh)"
+            },
+            {
+                "command": "grails.ctx.createController",
+                "title": "Nuevo Controller",
+                "category": "Grails"
+            },
+            {
+                "command": "grails.ctx.createDomain",
+                "title": "Nuevo Domain Class",
+                "category": "Grails"
+            },
+            {
+                "command": "grails.ctx.createService",
+                "title": "Nuevo Service",
+                "category": "Grails"
+            },
+            {
+                "command": "grails.ctx.createView",
+                "title": "Nueva Vista (GSP)",
+                "category": "Grails"
+            },
+            {
+                "command": "grails.ctx.createTagLib",
+                "title": "Nuevo TagLib",
+                "category": "Grails"
+            },
+            {
+                "command": "grails.runAppDebug",
+                "title": "Correr Aplicación (Debug)",
+                "category": "Grails"
+            },
+            {
+                "command": "grails.testApp",
+                "title": "Ejecutar Tests",
+                "category": "Grails"
+            },
+            {
+                "command": "grails.ctx.createFolder",
+                "title": "Nueva Carpeta",
+                "category": "Grails"
+            },
+            {
+                "command": "grails.ctx.createFile",
+                "title": "Nuevo Archivo",
+                "category": "Grails"
+            },
+            {
+                "command": "grails.ctx.rename",
+                "title": "Renombrar",
+                "category": "Grails"
+            },
+            {
+                "command": "grails.ctx.delete",
+                "title": "Eliminar",
+                "category": "Grails"
             }
         ],
         "menus": {
@@ -154,56 +183,152 @@
                     "group": "navigation@2"
                 },
                 {
-                    "command": "grails.testApp",
+                    "command": "grails.clean",
                     "when": "view == grailsProjectExplorer",
                     "group": "navigation@3"
                 },
                 {
-                    "command": "grails.refreshTree",
+                    "command": "grails.compile",
                     "when": "view == grailsProjectExplorer",
                     "group": "navigation@4"
+                },
+                {
+                    "command": "grails.refreshTree",
+                    "when": "view == grailsProjectExplorer",
+                    "group": "navigation@5"
                 }
             ],
             "commandPalette": [
                 {
                     "command": "grails.runApp",
-                    "when": "workspaceContains:grails-app"
+                    "when": "false"
+                },
+                {
+                    "command": "grails.stopApp",
+                    "when": "false"
+                },
+                {
+                    "command": "grails.clean",
+                    "when": "false"
+                },
+                {
+                    "command": "grails.compile",
+                    "when": "false"
+                },
+                {
+                    "command": "grails.refreshTree",
+                    "when": "false"
+                },
+                {
+                    "command": "grails.ctx.createController",
+                    "when": "false"
+                },
+                {
+                    "command": "grails.ctx.createDomain",
+                    "when": "false"
+                },
+                {
+                    "command": "grails.ctx.createService",
+                    "when": "false"
+                },
+                {
+                    "command": "grails.ctx.createView",
+                    "when": "false"
+                },
+                {
+                    "command": "grails.ctx.createTagLib",
+                    "when": "false"
                 },
                 {
                     "command": "grails.runAppDebug",
                     "when": "workspaceContains:grails-app"
                 },
                 {
-                    "command": "grails.stopApp",
-                    "when": "workspaceContains:grails-app"
-                },
-                {
                     "command": "grails.testApp",
                     "when": "workspaceContains:grails-app"
                 },
                 {
-                    "command": "grails.clean",
-                    "when": "workspaceContains:grails-app"
+                    "command": "grails.ctx.createFolder",
+                    "when": "false"
                 },
                 {
-                    "command": "grails.createController",
-                    "when": "workspaceContains:grails-app"
+                    "command": "grails.ctx.createFile",
+                    "when": "false"
                 },
                 {
-                    "command": "grails.createDomain",
-                    "when": "workspaceContains:grails-app"
+                    "command": "grails.ctx.rename",
+                    "when": "false"
                 },
                 {
-                    "command": "grails.createService",
-                    "when": "workspaceContains:grails-app"
+                    "command": "grails.ctx.delete",
+                    "when": "false"
+                }
+            ],
+            "view/item/context": [
+                {
+                    "command": "grails.ctx.createController",
+                    "when": "view == grailsProjectExplorer && viewItem == grailsFolder_controllers",
+                    "group": "1_create@1"
                 },
                 {
-                    "command": "grails.generateAll",
-                    "when": "workspaceContains:grails-app"
+                    "command": "grails.ctx.createDomain",
+                    "when": "view == grailsProjectExplorer && viewItem == grailsFolder_domain",
+                    "group": "1_create@1"
                 },
                 {
-                    "command": "grails.refreshTree",
-                    "when": "workspaceContains:grails-app"
+                    "command": "grails.ctx.createService",
+                    "when": "view == grailsProjectExplorer && viewItem == grailsFolder_services",
+                    "group": "1_create@1"
+                },
+                {
+                    "command": "grails.ctx.createView",
+                    "when": "view == grailsProjectExplorer && viewItem == grailsFolder_views",
+                    "group": "1_create@1"
+                },
+                {
+                    "command": "grails.ctx.createTagLib",
+                    "when": "view == grailsProjectExplorer && viewItem == grailsFolder_taglib",
+                    "group": "1_create@1"
+                },
+                {
+                    "command": "grails.ctx.createFolder",
+                    "when": "view == grailsProjectExplorer && viewItem =~ /^grailsFolder/",
+                    "group": "2_generic@1"
+                },
+                {
+                    "command": "grails.ctx.createFile",
+                    "when": "view == grailsProjectExplorer && viewItem =~ /^grailsFolder/",
+                    "group": "2_generic@2"
+                },
+                {
+                    "command": "grails.ctx.createController",
+                    "when": "view == grailsProjectExplorer && viewItem == grailsFolder",
+                    "group": "3_grails@1"
+                },
+                {
+                    "command": "grails.ctx.createDomain",
+                    "when": "view == grailsProjectExplorer && viewItem == grailsFolder",
+                    "group": "3_grails@2"
+                },
+                {
+                    "command": "grails.ctx.createService",
+                    "when": "view == grailsProjectExplorer && viewItem == grailsFolder",
+                    "group": "3_grails@3"
+                },
+                {
+                    "command": "grails.ctx.createView",
+                    "when": "view == grailsProjectExplorer && viewItem == grailsFolder",
+                    "group": "3_grails@4"
+                },
+                {
+                    "command": "grails.ctx.rename",
+                    "when": "view == grailsProjectExplorer && viewItem =~ /^grailsFolder|^grailsFile/",
+                    "group": "9_manage@1"
+                },
+                {
+                    "command": "grails.ctx.delete",
+                    "when": "view == grailsProjectExplorer && viewItem =~ /^grailsFolder|^grailsFile/",
+                    "group": "9_manage@2"
                 }
             ]
         }

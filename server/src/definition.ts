@@ -336,7 +336,7 @@ function resolveServiceMethod(
         // e.g. "def foo(", "private def foo(", "String foo(", "void foo ("
         if (
             new RegExp(
-                `(?:private|protected|public\\s+)?(?:def|\\w+)\\s+${methodName}\\s*\\(`,
+                `(?:(?:private|protected|public)\\s+)?(?:static\\s+)?(?:def|\\w+)\\s+${methodName}\\s*\\(`,
             ).test(l)
         ) {
             return toLocation(artifact.filePath, i);
@@ -364,6 +364,44 @@ function resolveServiceInjection(
         if (art) return toLocation(art.filePath);
     }
     return null;
+}
+
+/**
+ * Controller static method call: SwaggerController.oauth2Redirect()
+ * Resolves to the exact method line in the controller file.
+ * Handles imported controllers (e.g. import com.example.SwaggerController)
+ */
+function resolveControllerStaticCall(
+    word: string,
+    line: string,
+    project: GrailsProject,
+): Location | null {
+    // Match ClassName.methodName( — checks controllers and services
+    const staticMatch = /\b([A-Z]\w+)\s*\.\s*(\w+)\s*\(/.exec(line);
+    if (!staticMatch) return null;
+
+    const [, className, methodName] = staticMatch;
+    if (word !== methodName) return null;
+
+    // Check controllers first, then services (handles TestService.method() calls)
+    const artifact =
+        project.controllers.get(className) ?? project.services.get(className);
+    if (!artifact) return null;
+
+    const src = readFile(artifact.filePath);
+    if (!src) return toLocation(artifact.filePath);
+
+    const srcLines = src.split("\n");
+    for (let i = 0; i < srcLines.length; i++) {
+        if (
+            new RegExp(
+                `(?:(?:private|protected|public)\\s+)?(?:static\\s+)?(?:def|\\w+)\\s+${methodName}\\s*\\(`,
+            ).test(srcLines[i])
+        ) {
+            return toLocation(artifact.filePath, i);
+        }
+    }
+    return toLocation(artifact.filePath);
 }
 
 /**
@@ -517,7 +555,11 @@ export function getDefinition(
     const serviceLoc = resolveServiceInjection(word, line, project);
     if (serviceLoc) return serviceLoc;
 
-    // 6. GORM static call (Area.findAllByPadre, Area.get)
+    // 6a. Controller static method call (SwaggerController.oauth2Redirect)
+    const ctrlStaticLoc = resolveControllerStaticCall(word, line, project);
+    if (ctrlStaticLoc) return ctrlStaticLoc;
+
+    // 6b. GORM static call (Area.findAllByPadre, Area.get)
     const gormLoc = resolveGormStaticCall(word, line, project);
     if (gormLoc) return gormLoc;
 

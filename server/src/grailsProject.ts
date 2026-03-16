@@ -194,8 +194,13 @@ export function findGrailsRoot(startPath: string): string | null {
  */
 function domainScanDirs(root: string, version: GrailsVersion): string[] {
     const dirs = [path.join(root, "grails-app/domain")];
+
+    // grails-app/utils — common in older projects for shared domain-like classes
+    // These are scanned always; looksLikeDomainClass() filters non-domain files
+    dirs.push(path.join(root, "grails-app/utils"));
+
     if (version !== "2") {
-        // Grails 3+ may have domain-annotated classes in src/main/groovy
+        // Grails 3+: domain-annotated classes can live in src/main/groovy
         dirs.push(path.join(root, "src/main/groovy"));
     }
     return dirs;
@@ -281,7 +286,6 @@ const CLASS_NAME_RE = /class\s+(\w+)/;
 
 // Auto-injected GORM fields — not real domain properties
 const SKIP_FIELD_NAMES = new Set([
-    "id",
     "version",
     "dateCreated",
     "lastUpdated",
@@ -433,7 +437,9 @@ export function buildGrailsProject(root: string): GrailsProject {
     for (const dir of domainScanDirs(root, version)) {
         const isExtraDir =
             dir.includes("src/main/groovy") ||
-            dir.includes("src\\main\\groovy");
+            dir.includes("src\\main\\groovy") ||
+            dir.includes("grails-app/utils") ||
+            dir.includes("grails-app\\utils");
         for (const f of scanGroovyFiles(dir)) {
             if (isExtraDir) {
                 const src = readFileSafe(f);
