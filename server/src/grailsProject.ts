@@ -3,6 +3,8 @@ import * as path from "path";
 
 export interface DomainClass {
     name: string;
+    qualifiedName: string;
+    packageName: string;
     filePath: string;
     properties: DomainProperty[];
     hasMany: Record<string, string>;
@@ -16,18 +18,61 @@ export interface DomainProperty {
 
 export interface GrailsArtifact {
     name: string;
+    qualifiedName: string;
+    packageName: string;
     simpleName: string;
     filePath: string;
     kind: "controller" | "service" | "taglib" | "domain";
 }
 
+export interface GrailsVersionInfo {
+    raw: string | null;
+    major: GrailsVersion;
+    source:
+        | "gradle.properties"
+        | "build.gradle"
+        | "build.gradle.kts"
+        | "application.properties"
+        | "BuildConfig.groovy"
+        | "unknown";
+}
+
+export interface ProjectDependency {
+    group: string;
+    artifact: string;
+    version: string | null;
+}
+
+export interface SourceMember {
+    name: string;
+    type: string | null;
+    line: number;
+    kind: "property" | "method";
+}
+
+export interface SourceClass {
+    name: string;
+    qualifiedName: string;
+    packageName: string;
+    filePath: string;
+    language: "groovy" | "java";
+    declarationKind: "class" | "interface" | "trait" | "enum" | "record";
+    line: number;
+    members: SourceMember[];
+}
+
 export interface GrailsProject {
     root: string;
     version: GrailsVersion;
+    versionInfo: GrailsVersionInfo;
     domains: Map<string, DomainClass>;
     controllers: Map<string, GrailsArtifact>;
     services: Map<string, GrailsArtifact>;
     taglibs: Map<string, GrailsArtifact>;
+    sourceClasses: Map<string, SourceClass>;
+    sourceClassesBySimpleName: Map<string, SourceClass[]>;
+    sourceRoots: string[];
+    dependencies: ProjectDependency[];
 }
 
 // ─── Version detection ────────────────────────────────────────────────────────
@@ -65,7 +110,7 @@ function parseMajorVersion(versionStr: string): GrailsVersion | null {
     return null;
 }
 
-export function detectGrailsVersion(root: string): GrailsVersion {
+export function detectGrailsVersionInfo(root: string): GrailsVersionInfo {
     // ── 1. gradle.properties ────────────────────────────────────────────────
     // Most reliable source for Grails 3+. Examples found in real projects:
     //   grailsVersion=4.0.1
@@ -76,10 +121,17 @@ export function detectGrailsVersion(root: string): GrailsVersion {
     if (fs.existsSync(gradleProps)) {
         const content = readFileSafe(gradleProps);
         // Match "grailsVersion=X" or "grailsVersion = X" — value ends at newline or whitespace
-        const match = /grailsVersion\s*=\s*([\d]+)/.exec(content);
+        const match = /grailsVersion\s*=\s*([0-9][0-9A-Za-z.+-]*)/.exec(
+            content,
+        );
         if (match) {
             const v = parseMajorVersion(match[1]);
-            if (v) return v;
+            if (v)
+                return {
+                    raw: match[1],
+                    major: v,
+                    source: "gradle.properties",
+                };
         }
     }
 
@@ -95,7 +147,7 @@ export function detectGrailsVersion(root: string): GrailsVersion {
     //   val grailsVersion by extra("6.1.0")
     //   id("org.grails.grails-web") version "6.1.0"
     //   implementation("org.grails:grails-core:6.1.0")
-    for (const buildFile of ["build.gradle", "build.gradle.kts"]) {
+    for (const buildFile of ["build.gradle", "build.gradle.kts"] as const) {
         const buildPath = path.join(root, buildFile);
         if (!fs.existsSync(buildPath)) continue;
         const content = readFileSafe(buildPath);
@@ -103,54 +155,102 @@ export function detectGrailsVersion(root: string): GrailsVersion {
         // Try multiple patterns, most specific first
         const patterns = [
             // Plugin version: id "org.grails.grails-web" version "4.0.1"
-            /org\.grails[.\w-]+["\s]+version\s+["']([\d]+)/,
+            /org\.(?:apache\.)?grails[.\w-]+["\s)]+version\s+["']([0-9][0-9A-Za-z.+-]*)/,
             // Direct variable: grailsVersion = "4.0.1" or grailsVersion: "4.0.1"
-            /grailsVersion\s*[=:]\s*["']([\d]+)/,
+            /grailsVersion\s*[=:]\s*["']([0-9][0-9A-Za-z.+-]*)/,
             // Kotlin extra: val grailsVersion by extra("4.0.1")
-            /grailsVersion.*extra.*["']([\d]+)/,
+            /grailsVersion.*extra.*["']([0-9][0-9A-Za-z.+-]*)/,
             // Dependency: grails-core:4.0.1
-            /grails-core['":\s]+([\d]+)/,
+            /grails-core['":\s]+([0-9][0-9A-Za-z.+-]*)/,
             // Grails BOM: org.grails:grails-bom:4.0.1
-            /grails-bom['":\s]+([\d]+)/,
+            /grails-bom['":\s]+([0-9][0-9A-Za-z.+-]*)/,
         ];
 
         for (const pattern of patterns) {
             const m = pattern.exec(content);
             if (m) {
                 const v = parseMajorVersion(m[1]);
-                if (v) return v;
+                if (v)
+                    return {
+                        raw: m[1],
+                        major: v,
+                        source: buildFile,
+                    };
             }
         }
 
         // Has a build.gradle but couldn't determine version — assume Grails 3+
         // (any Grails project using Gradle is at minimum version 3)
-        return "3";
+        return { raw: null, major: "3", source: buildFile };
     }
 
     // ── 3. Grails 2 markers ──────────────────────────────────────────────────
     // Grails 2 does not use Gradle — it has its own build system
-    if (fs.existsSync(path.join(root, "grails-app/conf/BuildConfig.groovy")))
-        return "2";
     const appProps = path.join(root, "application.properties");
     if (fs.existsSync(appProps)) {
         const content = readFileSafe(appProps);
-        const match = /app\.grails\.version\s*=\s*(\d+)/.exec(content);
+        const match = /app\.grails\.version\s*=\s*([0-9][0-9A-Za-z.+-]*)/.exec(
+            content,
+        );
         if (match) {
             const v = parseMajorVersion(match[1]);
-            return v ?? "2";
+            return {
+                raw: match[1],
+                major: v ?? "2",
+                source: "application.properties",
+            };
         }
-        if (content.includes("app.grails.version")) return "2";
+        if (content.includes("app.grails.version"))
+            return {
+                raw: null,
+                major: "2",
+                source: "application.properties",
+            };
     }
 
-    return "unknown";
+    if (fs.existsSync(path.join(root, "grails-app/conf/BuildConfig.groovy")))
+        return { raw: null, major: "2", source: "BuildConfig.groovy" };
+
+    return { raw: null, major: "unknown", source: "unknown" };
 }
+
+export function detectGrailsVersion(root: string): GrailsVersion {
+    return detectGrailsVersionInfo(root).major;
+}
+
+interface CachedFile {
+    mtimeMs: number;
+    size: number;
+    content: string;
+}
+
+const fileContentCache = new Map<string, CachedFile>();
 
 function readFileSafe(filePath: string): string {
     try {
-        return fs.readFileSync(filePath, "utf8");
+        const stat = fs.statSync(filePath);
+        const cached = fileContentCache.get(filePath);
+        if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size)
+            return cached.content;
+        const content = fs.readFileSync(filePath, "utf8");
+        fileContentCache.set(filePath, {
+            mtimeMs: stat.mtimeMs,
+            size: stat.size,
+            content,
+        });
+        return content;
     } catch {
+        fileContentCache.delete(filePath);
         return "";
     }
+}
+
+function parsePackageName(src: string): string {
+    return /^\s*package\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/m.exec(src)?.[1] ?? "";
+}
+
+function qualifiedName(packageName: string, name: string): string {
+    return packageName ? `${packageName}.${name}` : name;
 }
 
 // ─── Detection ────────────────────────────────────────────────────────────────
@@ -250,6 +350,150 @@ function scanGroovyFiles(dir: string): string[] {
     return results;
 }
 
+function scanSourceFiles(dir: string): string[] {
+    if (!fs.existsSync(dir)) return [];
+    const results: string[] = [];
+    try {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+                if (
+                    [
+                        "build",
+                        ".gradle",
+                        "out",
+                        "target",
+                        "node_modules",
+                        ".git",
+                    ].includes(entry.name)
+                )
+                    continue;
+                results.push(...scanSourceFiles(full));
+            } else if (
+                entry.isFile() &&
+                (entry.name.endsWith(".groovy") || entry.name.endsWith(".java"))
+            ) {
+                results.push(full);
+            }
+        }
+    } catch {
+        // Unreadable directories are not part of the semantic model.
+    }
+    return results;
+}
+
+export function discoverSourceRoots(root: string): string[] {
+    const candidates = [
+        "grails-app/controllers",
+        "grails-app/domain",
+        "grails-app/services",
+        "grails-app/taglib",
+        "grails-app/init",
+        "grails-app/utils",
+        "grails-app/conf",
+        "src/main/groovy",
+        "src/main/java",
+        "src/test/groovy",
+        "src/test/java",
+        "src/integration-test/groovy",
+        "src/integration-test/java",
+        "src/functional-test/groovy",
+        "src/functional-test/java",
+        "test/unit",
+        "test/integration",
+    ];
+    return candidates
+        .map((relativePath) => path.join(root, relativePath))
+        .filter((candidate) => fs.existsSync(candidate));
+}
+
+function parseSourceClass(filePath: string): SourceClass | null {
+    const src = readFileSafe(filePath);
+    if (!src) return null;
+
+    const declaration = /\b(class|interface|trait|enum|record)\s+([A-Za-z_]\w*)/.exec(
+        src,
+    );
+    if (!declaration) return null;
+
+    const packageName = parsePackageName(src);
+    const name = declaration[2];
+    const beforeDeclaration = src.slice(0, declaration.index);
+    const declarationLine = beforeDeclaration.split("\n").length - 1;
+    const members: SourceMember[] = [];
+    const lines = src.split("\n");
+    const methodPattern = /^\s*(?:(?:public|protected|private|static|final|abstract|synchronized|native)\s+)*(?:def|[A-Za-z_$][\w.$<>?,\[\]]*)\s+([A-Za-z_]\w*)\s*\(/;
+    const propertyPattern = /^\s*(?:(?:public|protected|private|static|final|transient|volatile)\s+)*([A-Za-z_$][\w.$<>?,\[\]]*)\s+([A-Za-z_]\w*)\s*(?:=|$)/;
+    const ignoredMembers = new Set([
+        "if",
+        "for",
+        "while",
+        "switch",
+        "catch",
+        "class",
+        "interface",
+        "trait",
+        "enum",
+        "record",
+    ]);
+
+    for (let line = 0; line < lines.length; line++) {
+        const method = methodPattern.exec(lines[line]);
+        if (method && !ignoredMembers.has(method[1])) {
+            members.push({
+                name: method[1],
+                type: null,
+                line,
+                kind: "method",
+            });
+            continue;
+        }
+        const property = propertyPattern.exec(lines[line]);
+        if (
+            property &&
+            !ignoredMembers.has(property[1]) &&
+            !ignoredMembers.has(property[2])
+        ) {
+            members.push({
+                name: property[2],
+                type: property[1],
+                line,
+                kind: "property",
+            });
+        }
+    }
+
+    return {
+        name,
+        qualifiedName: qualifiedName(packageName, name),
+        packageName,
+        filePath,
+        language: filePath.endsWith(".java") ? "java" : "groovy",
+        declarationKind: declaration[1] as SourceClass["declarationKind"],
+        line: declarationLine,
+        members,
+    };
+}
+
+function parseDependencies(root: string): ProjectDependency[] {
+    const dependencies = new Map<string, ProjectDependency>();
+    for (const buildFile of ["build.gradle", "build.gradle.kts"]) {
+        const src = readFileSafe(path.join(root, buildFile));
+        if (!src) continue;
+        const coordinatePattern = /["']([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)(?::([^"'\s)]+))?["']/g;
+        let match: RegExpExecArray | null;
+        while ((match = coordinatePattern.exec(src)) !== null) {
+            const dependency = {
+                group: match[1],
+                artifact: match[2],
+                version: match[3] ?? null,
+            };
+            dependencies.set(`${dependency.group}:${dependency.artifact}`, dependency);
+        }
+    }
+    return [...dependencies.values()];
+}
+
 // ─── Domain class parsing ─────────────────────────────────────────────────────
 
 /**
@@ -332,6 +576,7 @@ function parseDomainClass(filePath: string): DomainClass | null {
     const classMatch = CLASS_NAME_RE.exec(src);
     if (!classMatch) return null;
     const name = classMatch[1];
+    const packageName = parsePackageName(src);
 
     const properties: DomainProperty[] = [];
     for (const line of src.split("\n")) {
@@ -368,7 +613,15 @@ function parseDomainClass(filePath: string): DomainClass | null {
         }
     }
 
-    return { name, filePath, properties, hasMany, belongsTo };
+    return {
+        name,
+        qualifiedName: qualifiedName(packageName, name),
+        packageName,
+        filePath,
+        properties,
+        hasMany,
+        belongsTo,
+    };
 }
 
 /**
@@ -402,6 +655,7 @@ function parseArtifact(
     const src = readFileSafe(filePath);
     const classMatch = CLASS_NAME_RE.exec(src);
     const name = classMatch ? classMatch[1] : fileName;
+    const packageName = parsePackageName(src);
 
     const suffix =
         kind === "controller"
@@ -416,22 +670,52 @@ function parseArtifact(
         ? name.slice(0, -suffix.length).toLowerCase()
         : name.toLowerCase();
 
-    return { name, simpleName, filePath, kind };
+    return {
+        name,
+        qualifiedName: qualifiedName(packageName, name),
+        packageName,
+        simpleName,
+        filePath,
+        kind,
+    };
 }
 
 // ─── Project builder ──────────────────────────────────────────────────────────
 
 export function buildGrailsProject(root: string): GrailsProject {
-    const version = detectGrailsVersion(root);
+    const versionInfo = detectGrailsVersionInfo(root);
+    const version = versionInfo.major;
+    const sourceRoots = discoverSourceRoots(root);
 
     const project: GrailsProject = {
         root,
         version,
+        versionInfo,
         domains: new Map(),
         controllers: new Map(),
         services: new Map(),
         taglibs: new Map(),
+        sourceClasses: new Map(),
+        sourceClassesBySimpleName: new Map(),
+        sourceRoots,
+        dependencies: parseDependencies(root),
     };
+
+    const indexedSourcePaths = new Set<string>();
+    for (const sourceRoot of sourceRoots) {
+        for (const filePath of scanSourceFiles(sourceRoot)) {
+            const normalized = path.resolve(filePath);
+            if (indexedSourcePaths.has(normalized)) continue;
+            indexedSourcePaths.add(normalized);
+            const sourceClass = parseSourceClass(filePath);
+            if (!sourceClass) continue;
+            project.sourceClasses.set(sourceClass.qualifiedName, sourceClass);
+            const sameName =
+                project.sourceClassesBySimpleName.get(sourceClass.name) ?? [];
+            sameName.push(sourceClass);
+            project.sourceClassesBySimpleName.set(sourceClass.name, sameName);
+        }
+    }
 
     // Domains
     for (const dir of domainScanDirs(root, version)) {
@@ -478,6 +762,83 @@ export function buildGrailsProject(root: string): GrailsProject {
     }
 
     return project;
+}
+
+function removeFileFromMap<T extends { filePath: string }>(
+    values: Map<string, T>,
+    filePath: string,
+): void {
+    const normalized = path.resolve(filePath);
+    for (const [key, value] of values) {
+        if (path.resolve(value.filePath) === normalized) values.delete(key);
+    }
+}
+
+/**
+ * Applies a single source-file create/change/delete to an existing project model.
+ * Build metadata changes still require buildGrailsProject because they may alter
+ * source roots, dependencies and the framework version.
+ */
+export function updateGrailsProjectFile(
+    project: GrailsProject,
+    filePath: string,
+): void {
+    const normalized = path.resolve(filePath);
+    removeFileFromMap(project.domains, normalized);
+    removeFileFromMap(project.controllers, normalized);
+    removeFileFromMap(project.services, normalized);
+    removeFileFromMap(project.taglibs, normalized);
+
+    for (const [key, sourceClass] of project.sourceClasses) {
+        if (path.resolve(sourceClass.filePath) !== normalized) continue;
+        project.sourceClasses.delete(key);
+        const sameName = (
+            project.sourceClassesBySimpleName.get(sourceClass.name) ?? []
+        ).filter((candidate) => path.resolve(candidate.filePath) !== normalized);
+        if (sameName.length > 0)
+            project.sourceClassesBySimpleName.set(sourceClass.name, sameName);
+        else project.sourceClassesBySimpleName.delete(sourceClass.name);
+    }
+
+    if (!fs.existsSync(normalized) || !/\.(groovy|java)$/.test(normalized))
+        return;
+
+    const sourceClass = parseSourceClass(normalized);
+    if (sourceClass) {
+        project.sourceClasses.set(sourceClass.qualifiedName, sourceClass);
+        const sameName =
+            project.sourceClassesBySimpleName.get(sourceClass.name) ?? [];
+        sameName.push(sourceClass);
+        project.sourceClassesBySimpleName.set(sourceClass.name, sameName);
+    }
+
+    if (!normalized.endsWith(".groovy")) return;
+    const relative = path
+        .relative(project.root, normalized)
+        .replace(/\\/g, "/");
+    if (relative.startsWith("grails-app/domain/")) {
+        const domain = parseDomainClass(normalized);
+        if (domain) project.domains.set(domain.name, domain);
+    } else if (relative.startsWith("grails-app/controllers/")) {
+        const controller = parseArtifact(normalized, "controller");
+        if (controller) project.controllers.set(controller.name, controller);
+    } else if (relative.startsWith("grails-app/services/")) {
+        const service = parseArtifact(normalized, "service");
+        if (service) project.services.set(service.name, service);
+    } else if (relative.startsWith("grails-app/taglib/")) {
+        const taglib = parseArtifact(normalized, "taglib");
+        if (taglib) project.taglibs.set(taglib.name, taglib);
+    } else if (
+        relative.startsWith("grails-app/utils/") ||
+        relative.startsWith("src/main/groovy/")
+    ) {
+        const src = readFileSafe(normalized);
+        if (looksLikeDomainClass(normalized, src)) {
+            const domain = parseDomainClass(normalized);
+            if (domain && !project.domains.has(domain.name))
+                project.domains.set(domain.name, domain);
+        }
+    }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

@@ -1,0 +1,9 @@
+Grails Support for VS Code
+Copyright 2026-2027 Johan Mixtega Cisneros
+
+The optional bundled semantic server is built from Groovy Language Server:
+https://github.com/GroovyLanguageServer/groovy-language-server
+Copyright its respective contributors, licensed under Apache License 2.0.
+
+The semantic server JAR contains its own META-INF/LICENSE,
+META-INF/NOTICE and third-party license files.

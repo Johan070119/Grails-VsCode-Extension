@@ -1,9 +1,14 @@
 {
     "name": "grails-extension-vscode",
     "displayName": "Grails Support For VS Code",
-    "description": "Grails language support for VS Code — navigation, completion, project tree, CLI",
-    "version": "0.4.0",
+    "description": "Grails language support for VS Code with completion, navigation, project model, GSP support and CLI integration",
+    "version": "0.5.0",
     "publisher": "JohanMixtegaCisneros",
+    "license": "SEE LICENSE IN LICENSE.md",
+    "homepage": "https://github.com/Johan070119/Grails-VsCode-Extension#readme",
+    "bugs": {
+        "url": "https://github.com/Johan070119/Grails-VsCode-Extension/issues"
+    },
     "repository": {
         "type": "git",
         "url": "https://github.com/Johan070119/Grails-VsCode-Extension"
@@ -15,6 +20,24 @@
         "Programming Languages",
         "Other"
     ],
+    "galleryBanner": {
+        "color": "#2f6f4e",
+        "theme": "dark"
+    },
+    "pricing": "Free",
+    "extensionKind": [
+        "workspace"
+    ],
+    "capabilities": {
+        "untrustedWorkspaces": {
+            "supported": "limited",
+            "description": "Language features remain available, but Grails, Gradle and JVM semantic execution are disabled."
+        },
+        "virtualWorkspaces": {
+            "supported": false,
+            "description": "A local filesystem is required to index and run Grails projects."
+        }
+    },
     "keywords": [
         "grails",
         "groovy",
@@ -63,6 +86,42 @@
                     ],
                     "default": "off",
                     "description": "Trace LSP communication"
+                },
+                "grails.semantic.enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enable the experimental compiler-backed Groovy semantic server"
+                },
+                "grails.semantic.server.jar": {
+                    "type": "string",
+                    "default": "",
+                    "scope": "machine-overridable",
+                    "description": "Optional absolute path overriding the bundled Groovy Language Server JAR"
+                },
+                "grails.semantic.java.home": {
+                    "type": "string",
+                    "default": "",
+                    "scope": "machine-overridable",
+                    "description": "JDK home used to launch the experimental semantic server"
+                },
+                "grails.semantic.classpath": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "default": [],
+                    "scope": "resource",
+                    "description": "Additional JARs or directories for Groovy semantic analysis; relative paths resolve from each project root"
+                },
+                "grails.semantic.gradle.autoClasspath": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Resolve the compiler classpath automatically with the trusted project's Gradle Wrapper"
+                },
+                "grails.semantic.gradle.timeout": {
+                    "type": "number",
+                    "default": 120000,
+                    "minimum": 10000,
+                    "maximum": 600000,
+                    "description": "Maximum time in milliseconds for Gradle classpath discovery"
                 }
             }
         },
@@ -339,7 +398,10 @@
         "watch": "tsc -p tsconfig.json --watch",
         "watch:server": "cd server && tsc -p tsconfig.json --watch",
         "build": "npm run compile",
-        "vscode:prepublish": "npm run build"
+        "build:semantic": "node scripts/build-semantic-server.mjs",
+        "vscode:prepublish": "npm run build",
+        "test": "npm run compile && node --test test/*.test.js server/test/*.test.js",
+        "check": "npm run test"
     },
     "dependencies": {
         "vscode-languageclient": "^9.0.0"

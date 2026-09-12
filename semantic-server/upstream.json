@@ -1,0 +1,7 @@
+{
+    "repository": "https://github.com/GroovyLanguageServer/groovy-language-server.git",
+    "commit": "347d098a928707223ce44b52cc45174a6327a5f3",
+    "jar": "groovy-language-server-all.jar",
+    "sha256": "e45ecbaa0d8e77d4eac08a534a9e4f83402ca8f8d578910a5c875118cc00f76d",
+    "license": "Apache-2.0"
+}

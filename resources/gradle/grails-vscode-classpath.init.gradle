@@ -1,0 +1,49 @@
+import groovy.json.JsonOutput
+
+gradle.projectsEvaluated {
+    if (rootProject.tasks.findByName('grailsVscodeClasspath') != null) {
+        return
+    }
+
+    rootProject.tasks.create('grailsVscodeClasspath') {
+        group = 'grails vscode'
+        description = 'Prints the resolved classpath and source roots for the Grails VS Code extension.'
+
+        doLast {
+            def classpath = new LinkedHashSet<String>()
+            def sourceRoots = new LinkedHashSet<String>()
+
+            rootProject.allprojects.each { project ->
+                def sourceSets = project.extensions.findByName('sourceSets')
+                if (sourceSets == null) {
+                    return
+                }
+
+                sourceSets.each { sourceSet ->
+                    sourceSet.allSource.srcDirs.each { sourceRoots.add(it.absolutePath) }
+                    if (sourceSet.name == 'main') {
+                        try {
+                            sourceSet.compileClasspath.files.each { classpath.add(it.absolutePath) }
+                        } catch (Exception ignored) { }
+                        try {
+                            sourceSet.runtimeClasspath.files.each { classpath.add(it.absolutePath) }
+                        } catch (Exception ignored) { }
+                        try {
+                            sourceSet.output.classesDirs.files.each { classpath.add(it.absolutePath) }
+                        } catch (Exception ignored) { }
+                        try {
+                            if (sourceSet.output.resourcesDir != null) {
+                                classpath.add(sourceSet.output.resourcesDir.absolutePath)
+                            }
+                        } catch (Exception ignored) { }
+                    }
+                }
+            }
+
+            println 'GRAILS_VSCODE_MODEL:' + JsonOutput.toJson([
+                classpath: classpath as List,
+                sourceRoots: sourceRoots as List
+            ])
+        }
+    }
+}

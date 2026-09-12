@@ -623,4 +623,4 @@ Los backticks en template literals dentro del servidor LSP pueden causar errores
 
 ---
 
-*Documentación generada el 16 de marzo de 2026. Versión del proyecto: 0.4.0*
+*Documentación revisada el 11 de septiembre de 2026. Versión del proyecto: 0.5.0*

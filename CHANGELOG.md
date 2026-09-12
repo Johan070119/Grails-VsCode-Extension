@@ -1,5 +1,29 @@
 # Change Log
 
+## [0.5.0] - 2026-09-11
+
+### Added
+
+- Test harness for project modeling, language features, path safety and command resolution.
+- Multi-root language-server and Grails project explorer support.
+- Exact Grails version metadata, modern source-root discovery, direct Gradle dependency inventory and incremental updates.
+- Shared Groovy/Java source type index with qualified-name collision handling.
+- Hover, document symbols, workspace symbols and basic project source member completion/navigation.
+- Experimental, opt-in JVM Groovy semantic server adapter with one process per Grails root.
+- Trusted Gradle Wrapper bridge for automatic transitive classpath and source-set discovery.
+- Bundled and reproducible semantic-server build pinned by upstream commit and SHA-256.
+- Wrapper-first command resolution (`grailsw`, then `gradlew`, then system Grails).
+- Cross-platform CI definition.
+
+### Security
+
+- Grails/Gradle execution is blocked in untrusted workspaces.
+- File and folder prompts reject traversal outside the selected project.
+
+### Changed
+
+- Project licensing and npm metadata are now consistently Apache-2.0.
+
 ## [0.4.0] - 2026-03-16
 
 ### Added

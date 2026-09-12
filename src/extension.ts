@@ -7,8 +7,20 @@ import {
     ServerOptions,
     TransportKind,
 } from "vscode-languageclient/node";
+import {
+    isPathWithin,
+    isSafeEntryName,
+    resolvePathWithin,
+} from "./pathSafety";
+import {
+    GrailsCommandKind,
+    quoteTerminalArgument,
+    resolveGrailsCommand,
+} from "./grailsCommand";
+import { startSemanticClients } from "./semanticClient";
 
 let client: LanguageClient;
+let semanticClients: LanguageClient[] = [];
 let treeProvider: GrailsProjectProvider;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -25,13 +37,35 @@ function findGrailsRoot(startPath: string): string | null {
 }
 
 function getWorkspaceRoot(): string | null {
-    const folders = vscode.workspace.workspaceFolders;
-    if (!folders) return null;
-    for (const f of folders) {
-        if (fs.existsSync(path.join(f.uri.fsPath, "grails-app")))
-            return f.uri.fsPath;
+    return getWorkspaceRoots()[0] ?? null;
+}
+
+function getWorkspaceRoots(): string[] {
+    return (vscode.workspace.workspaceFolders ?? [])
+        .map((folder) => folder.uri.fsPath)
+        .filter((folder) => fs.existsSync(path.join(folder, "grails-app")));
+}
+
+async function selectWorkspaceRoot(): Promise<string | null> {
+    const roots = getWorkspaceRoots();
+    if (roots.length === 0) return null;
+    if (roots.length === 1) return roots[0];
+
+    const activePath = vscode.window.activeTextEditor?.document.uri.fsPath;
+    if (activePath) {
+        const activeRoot = roots.find((root) => isPathWithin(root, activePath));
+        if (activeRoot) return activeRoot;
     }
-    return null;
+
+    const selected = await vscode.window.showQuickPick(
+        roots.map((root) => ({
+            label: path.basename(root),
+            description: root,
+            root,
+        })),
+        { placeHolder: "Selecciona el proyecto Grails" },
+    );
+    return selected?.root ?? null;
 }
 
 function detectGrailsVersion(root: string): string {
@@ -62,11 +96,27 @@ function detectGrailsVersion(root: string): string {
     return "desconocida";
 }
 
-function runGrailsCommand(cmd: string): void {
-    let t = vscode.window.terminals.find((t) => t.name === "Grails");
-    if (!t) t = vscode.window.createTerminal({ name: "Grails" });
+async function runGrailsCommand(kind: GrailsCommandKind): Promise<void> {
+    if (!vscode.workspace.isTrusted) {
+        vscode.window.showWarningMessage(
+            "Confía en este workspace antes de ejecutar comandos Grails.",
+        );
+        return;
+    }
+    const root = await selectWorkspaceRoot();
+    if (!root) {
+        vscode.window.showWarningMessage("No se encontró un proyecto Grails.");
+        return;
+    }
+    const terminalName = `Grails: ${path.basename(root)}`;
+    let t = vscode.window.terminals.find((terminal) => terminal.name === terminalName);
+    if (!t) t = vscode.window.createTerminal({ name: terminalName, cwd: root });
+    const resolved = resolveGrailsCommand(root, kind);
+    const commandLine = [resolved.executable, ...resolved.args]
+        .map((argument) => quoteTerminalArgument(argument))
+        .join(" ");
     t.show();
-    t.sendText(cmd);
+    t.sendText(commandLine);
 }
 
 // ─── Templates (compatible Grails 2–7+) ──────────────────────────────────────
@@ -217,6 +267,10 @@ async function writeNewFile(
     fileName: string,
     content: string,
 ): Promise<void> {
+    if (!isSafeEntryName(fileName)) {
+        vscode.window.showErrorMessage("El nombre del archivo no es válido.");
+        return;
+    }
     const full = path.join(folder, fileName);
     if (fs.existsSync(full)) {
         vscode.window.showWarningMessage("Ya existe: " + fileName);
@@ -252,9 +306,13 @@ async function createArtefact(
     const rawName = parts[parts.length - 1];
     const sub = parts.slice(0, -1).join("/");
     const className = rawName.endsWith(suffix) ? rawName : rawName + suffix;
-    const targetDir = sub ? path.join(folder, sub) : folder;
+    const targetDir = sub ? resolvePathWithin(folder, sub) : folder;
+    if (!targetDir) {
+        vscode.window.showErrorMessage("La ruta del artefacto no es válida.");
+        return;
+    }
     const pkg = inferPackage(targetDir);
-    const version = treeProvider?.getVersion() ?? "";
+    const version = treeProvider?.getVersionForPath(folder) ?? "";
 
     await writeNewFile(
         targetDir,
@@ -271,6 +329,7 @@ async function createArtefact(
 // This lets us show the right primary action per folder type.
 type NodeKind =
     | "version-label"
+    | "project-root"
     | "root-group"
     | "grailsFolder_controllers"
     | "grailsFolder_domain"
@@ -320,28 +379,42 @@ export class GrailsTreeItem extends vscode.TreeItem {
 class GrailsProjectProvider implements vscode.TreeDataProvider<GrailsTreeItem> {
     private _onChange = new vscode.EventEmitter<GrailsTreeItem | undefined>();
     readonly onDidChangeTreeData = this._onChange.event;
-    private root: string | null = null;
-    private version = "";
+    private roots: Array<{ root: string; version: string }> = [];
 
     constructor() {
         vscode.workspace.onDidChangeWorkspaceFolders(() => this.refresh());
-        this.detectRoot();
+        this.detectRoots();
     }
 
     refresh(): void {
-        this.detectRoot();
+        this.detectRoots();
         this._onChange.fire(undefined);
     }
     getRoot(): string | null {
-        return this.root;
+        return this.roots[0]?.root ?? null;
     }
     getVersion(): string {
-        return this.version;
+        return this.roots[0]?.version ?? "";
     }
 
-    private detectRoot(): void {
-        this.root = getWorkspaceRoot();
-        this.version = this.root ? detectGrailsVersion(this.root) : "";
+    getVersionForPath(filePath: string): string {
+        return (
+            this.roots.find(({ root }) => isPathWithin(root, filePath))
+                ?.version ?? ""
+        );
+    }
+    getRootForPath(filePath: string): string | null {
+        return (
+            this.roots.find(({ root }) => isPathWithin(root, filePath))?.root ??
+            null
+        );
+    }
+
+    private detectRoots(): void {
+        this.roots = getWorkspaceRoots().map((root) => ({
+            root,
+            version: detectGrailsVersion(root),
+        }));
     }
 
     getTreeItem(el: GrailsTreeItem): vscode.TreeItem {
@@ -349,9 +422,26 @@ class GrailsProjectProvider implements vscode.TreeDataProvider<GrailsTreeItem> {
     }
 
     getChildren(el?: GrailsTreeItem): GrailsTreeItem[] {
-        if (!this.root) return [];
-        if (!el) return this.topLevel(this.root);
+        if (this.roots.length === 0) return [];
+        if (!el) {
+            if (this.roots.length === 1)
+                return this.topLevel(this.roots[0].root);
+            return this.roots.map(
+                ({ root, version }) =>
+                    new GrailsTreeItem(
+                        {
+                            label: path.basename(root),
+                            fsPath: root,
+                            kind: "project-root",
+                            iconId: "root-folder",
+                            description: `Grails ${version}`,
+                        },
+                        vscode.TreeItemCollapsibleState.Expanded,
+                    ),
+            );
+        }
         if (el.node.kind === "version-label") return [];
+        if (el.node.kind === "project-root") return this.topLevel(el.node.fsPath);
         return this.children(el.node.fsPath);
     }
 
@@ -362,7 +452,7 @@ class GrailsProjectProvider implements vscode.TreeDataProvider<GrailsTreeItem> {
         items.push(
             new GrailsTreeItem(
                 {
-                    label: "Grails " + this.version,
+                    label: "Grails " + detectGrailsVersion(root),
                     fsPath: root,
                     kind: "version-label",
                     iconId: "package",
@@ -719,7 +809,13 @@ function registerContextCommands(ctx: vscode.ExtensionContext): void {
                     ? rawName
                     : rawName + ".gsp";
                 const viewName = rawName.replace(/\.gsp$/, "");
-                const targetDir = sub ? path.join(folder, sub) : folder;
+                const targetDir = sub ? resolvePathWithin(folder, sub) : folder;
+                if (!targetDir) {
+                    vscode.window.showErrorMessage(
+                        "La ruta de la vista no es válida.",
+                    );
+                    return;
+                }
 
                 await writeNewFile(targetDir, fileName, gspTemplate(viewName));
             },
@@ -741,7 +837,11 @@ function registerContextCommands(ctx: vscode.ExtensionContext): void {
                 });
                 if (!name) return;
 
-                const newPath = path.join(base, name.replace(/\\/g, "/"));
+                const newPath = resolvePathWithin(base, name);
+                if (!newPath) {
+                    vscode.window.showErrorMessage("La ruta no es válida.");
+                    return;
+                }
                 if (fs.existsSync(newPath)) {
                     vscode.window.showWarningMessage("Ya existe: " + name);
                     return;
@@ -778,7 +878,17 @@ function registerContextCommands(ctx: vscode.ExtensionContext): void {
                     .filter((p) => p.length > 0);
                 const fileName = parts[parts.length - 1];
                 const sub = parts.slice(0, -1).join("/");
-                const targetDir = sub ? path.join(base, sub) : base;
+                if (!isSafeEntryName(fileName)) {
+                    vscode.window.showErrorMessage(
+                        "El nombre del archivo no es válido.",
+                    );
+                    return;
+                }
+                const targetDir = sub ? resolvePathWithin(base, sub) : base;
+                if (!targetDir) {
+                    vscode.window.showErrorMessage("La ruta no es válida.");
+                    return;
+                }
 
                 await writeNewFile(targetDir, fileName, "");
             },
@@ -802,6 +912,7 @@ function registerContextCommands(ctx: vscode.ExtensionContext): void {
                     validateInput: (v) => {
                         if (!v.trim()) return "El nombre no puede estar vacío";
                         if (v === oldName) return "El nombre es el mismo";
+                        if (!isSafeEntryName(v)) return "Usa solo un nombre, sin rutas";
                         return null;
                     },
                 });
@@ -866,6 +977,13 @@ function registerContextCommands(ctx: vscode.ExtensionContext): void {
             async (item?: GrailsTreeItem) => {
                 const targetPath = item?.node.fsPath;
                 if (!targetPath) return;
+                const projectRoot = treeProvider.getRootForPath(targetPath);
+                if (!projectRoot || !isPathWithin(projectRoot, targetPath)) {
+                    vscode.window.showErrorMessage(
+                        "No se puede eliminar una ruta fuera del proyecto Grails.",
+                    );
+                    return;
+                }
 
                 const name = path.basename(targetPath);
                 const isDir = fs.statSync(targetPath).isDirectory();
@@ -911,6 +1029,16 @@ export function activate(context: vscode.ExtensionContext) {
         } as LanguageClientOptions,
     );
     client.start();
+    void startSemanticClients(context)
+        .then((startedClients) => {
+            semanticClients = startedClients;
+        })
+        .catch((error) => {
+            const detail = error instanceof Error ? error.message : String(error);
+            vscode.window.showErrorMessage(
+                `No se pudo preparar el servidor semántico Grails: ${detail}`,
+            );
+        });
 
     // Project tree
     treeProvider = new GrailsProjectProvider();
@@ -922,15 +1050,14 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     // Auto-refresh on file changes
-    const watcher = vscode.workspace.createFileSystemWatcher(
-        new vscode.RelativePattern(
-            vscode.workspace.workspaceFolders?.[0] ?? "",
-            "grails-app/**",
-        ),
-    );
-    watcher.onDidCreate(() => treeProvider.refresh());
-    watcher.onDidDelete(() => treeProvider.refresh());
-    context.subscriptions.push(watcher);
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+        const watcher = vscode.workspace.createFileSystemWatcher(
+            new vscode.RelativePattern(folder, "{grails-app,src}/**"),
+        );
+        watcher.onDidCreate(() => treeProvider.refresh());
+        watcher.onDidDelete(() => treeProvider.refresh());
+        context.subscriptions.push(watcher);
+    }
 
     // GSP CodeLens
     context.subscriptions.push(
@@ -941,21 +1068,25 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     // CLI commands
-    const cli: [string, () => void][] = [
-        ["grails.runApp", () => runGrailsCommand("grails run-app")],
+    const cli: [string, () => Promise<void>][] = [
+        ["grails.runApp", () => runGrailsCommand("runApp")],
         [
             "grails.runAppDebug",
-            () => runGrailsCommand("grails run-app --debug-jvm"),
+            () => runGrailsCommand("runAppDebug"),
         ],
-        ["grails.stopApp", () => runGrailsCommand("grails stop-app")],
-        ["grails.testApp", () => runGrailsCommand("grails test-app")],
-        ["grails.clean", () => runGrailsCommand("grails clean")],
-        ["grails.compile", () => runGrailsCommand("grails compile")],
-        ["grails.refreshTree", () => treeProvider.refresh()],
+        ["grails.stopApp", () => runGrailsCommand("stopApp")],
+        ["grails.testApp", () => runGrailsCommand("testApp")],
+        ["grails.clean", () => runGrailsCommand("clean")],
+        ["grails.compile", () => runGrailsCommand("compile")],
     ];
     for (const [cmd, fn] of cli) {
         context.subscriptions.push(vscode.commands.registerCommand(cmd, fn));
     }
+    context.subscriptions.push(
+        vscode.commands.registerCommand("grails.refreshTree", () =>
+            treeProvider.refresh(),
+        ),
+    );
 
     // Context menu commands
     registerContextCommands(context);
@@ -977,6 +1108,9 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate(): Thenable<void> | undefined {
-    if (!client) return undefined;
-    return client.stop();
+    const stops: Thenable<void>[] = semanticClients.map((semanticClient) =>
+        semanticClient.stop(),
+    );
+    if (client) stops.push(client.stop());
+    return stops.length > 0 ? Promise.all(stops).then(() => undefined) : undefined;
 }

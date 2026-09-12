@@ -2,11 +2,21 @@
 
 [![Version](https://img.shields.io/visual-studio-marketplace/v/JohanMixtegaCisneros.grails-extension-vscode)](https://marketplace.visualstudio.com/items?itemName=JohanMixtegaCisneros.grails-extension-vscode)
 [![Installs](https://img.shields.io/visual-studio-marketplace/i/JohanMixtegaCisneros.grails-extension-vscode)](https://marketplace.visualstudio.com/items?itemName=JohanMixtegaCisneros.grails-extension-vscode)
-![Grails](https://img.shields.io/badge/Grails-2.x%20–%207%2B-green)
+![Grails](https://img.shields.io/badge/Grails-2.5.6%20%7C%207.1.x-green)
 ![VS Code](https://img.shields.io/badge/VS%20Code-1.80+-blue)
-[![License](https://img.shields.io/badge/License-GPL%20v3%20%2B%20Non--Commercial-red)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue)](LICENSE.md)
 
-Soporte avanzado para el desarrollo de aplicaciones Grails en Visual Studio Code, inspirado en la experiencia de IntelliJ IDEA. Compatible con Grails 2.x hasta 7+.
+Soporte para desarrollar aplicaciones Grails en Visual Studio Code, inspirado en la experiencia de IntelliJ IDEA. Grails 7.1.x es la prioridad actual y Grails 2.5.6 se mantiene como carril de regresión; otras versiones permanecen experimentales hasta completar su matriz de pruebas.
+
+## Novedades de la versión 0.5.0
+
+- Modelo multi-root con detección exacta de versión y actualización incremental.
+- Indexación de clases y miembros Groovy/Java del proyecto.
+- Completion, definición, hover y símbolos básicos para tipos propios.
+- Servidor semántico Groovy JVM verificable, incluido de forma experimental.
+- Classpath transitivo y source sets obtenidos automáticamente mediante `gradlew`.
+- Ejecución segura wrapper-first y compatibilidad con Restricted Mode.
+- CI en Linux, macOS y Windows, además de pruebas de regresión 2.5.6/7.1.1.
 
 ---
 
@@ -14,7 +24,7 @@ Soporte avanzado para el desarrollo de aplicaciones Grails en Visual Studio Code
 
 ### 📝 Autocompletado Inteligente
 
-El servidor LSP analiza tu proyecto en tiempo real e indexa dominios, controllers y servicios al abrir el workspace.
+El servidor LSP analiza tu proyecto en tiempo real e indexa dominios, controllers, servicios y clases Groovy/Java al abrir el workspace. El soporte semántico profundo para Grails 7 está actualmente en desarrollo.
 
 **Domain Classes y GORM**
 - Propiedades del dominio al escribir `instancia.`
@@ -168,7 +178,7 @@ Comandos disponibles desde `Ctrl+Shift+P` (`Cmd+Shift+P` en Mac):
 | `Grails: Clean` | `grails clean` |
 | `Grails: Compile` | `grails compile` |
 
-Todos los comandos reusan el mismo terminal "Grails" en lugar de abrir uno nuevo cada vez.
+Los comandos prefieren `grailsw` cuando existe, después usan `gradlew` para tareas compatibles y finalmente Grails instalado en el sistema. Cada proyecto reutiliza su propio terminal y la ejecución solo está disponible en workspaces confiables.
 
 **Status bar:** muestra la versión de Grails detectada (`⬡ Grails 2.5.6`). Haz clic para ejecutar `grails run-app`.
 
@@ -191,12 +201,11 @@ def show() {
 
 | Grails | Spring Boot | Groovy | Java | Estado |
 |---|---|---|---|---|
-| 2.x | — | 2.x | 7+ | ✅ Soportado |
-| 3.x | 1.x | 2.x | 8+ | ✅ Soportado |
-| 4.x | 2.x | 2.x | 8+ | ✅ Soportado |
-| 5.x | 2.6+ | 3.x | 11+ | ✅ Soportado |
-| 6.x | 3.x | 4.x | 17+ | ✅ Soportado |
-| 7+ | 3.2+ | 4.x | 17+ | ✅ Soportado |
+| 2.5.6 | — | 2.x | 7+ | Compatibilidad mantenida y usada como regresión |
+| 3.x–5.x | Variable | 2.x–3.x | Variable | Compatibilidad básica; falta matriz completa |
+| 6.x | 3.x | 4.x | 17+ | Experimental |
+| 7.1.x | 3.x | 4.x | 17+ | Desarrollo prioritario |
+| 8.x | — | — | — | Planificado |
 
 Detección automática de versión desde `gradle.properties`, `build.gradle`, `build.gradle.kts` y `application.properties`.
 
@@ -207,6 +216,18 @@ Detección automática de versión desde `gradle.properties`, `build.gradle`, `b
 - VS Code 1.80.0 o superior
 - Un proyecto que contenga la carpeta `grails-app/`
 - Node.js (incluido con VS Code)
+
+### Servidor semántico experimental
+
+La versión 0.5.0 incluye el servidor Groovy JVM, pero permanece desactivado por defecto mientras se completa la fusión de resultados con el servidor Grails. Para probarlo:
+
+1. Instala un JDK 17 o superior.
+2. Abre un workspace confiable.
+3. Activa `grails.semantic.enabled` en Settings.
+
+La extensión obtiene el classpath y los source sets mediante el Gradle Wrapper sin modificar el build. El JDK se toma de `grails.semantic.java.home`, `java.jdt.ls.java.home` o `JAVA_HOME`, en ese orden. Puedes desactivar la resolución Gradle con `grails.semantic.gradle.autoClasspath` o proporcionar entradas adicionales mediante `grails.semantic.classpath`.
+
+Consulta [la arquitectura](docs/ARCHITECTURE.md), [el plan](docs/IMPLEMENTATION_PLAN.md) y [el estado](docs/IMPLEMENTATION_STATUS.md).
 
 ---
 
@@ -222,7 +243,7 @@ Detección automática de versión desde `gradle.properties`, `build.gradle`, `b
 ### Desde VSIX
 
 ```bash
-code --install-extension grails-extension-vscode-0.4.0.vsix
+code --install-extension grails-extension-vscode-0.5.0.vsix
 ```
 
 ---
@@ -248,7 +269,7 @@ Si encuentras algún bug o tienes sugerencias:
 
 ## Contribuir
 
-¡Las contribuciones son bienvenidas! Lee [CONTRIBUTING.md](CONTRIBUTING.md) o abre un PR directamente.
+¡Las contribuciones son bienvenidas! Lee [CONTRIBUTING_TECHNICAL.md](CONTRIBUTING_TECHNICAL.md) o abre un PR directamente.
 
 1. Fork el proyecto
 2. Crea tu rama (`git checkout -b feature/MiMejora`)
@@ -256,12 +277,10 @@ Si encuentras algún bug o tienes sugerencias:
 4. Push (`git push origin feature/MiMejora`)
 5. Abre un Pull Request
 
-Al contribuir aceptas que tu código se distribuye bajo la misma licencia del proyecto (GPL v3 + restricción no comercial).
+Al contribuir aceptas que tu código se distribuye bajo Apache License 2.0.
 
 ---
 
 ## Licencia
 
-GPL v3 con restricción de uso no comercial — ver [LICENSE](LICENSE) para los términos completos.
-
-En resumen: puedes usar, modificar y distribuir libremente este software, pero **no puedes cobrar por él ni por ningún trabajo derivado**.
+Apache License 2.0 — consulta [LICENSE.md](LICENSE.md) y [NOTICE](NOTICE).

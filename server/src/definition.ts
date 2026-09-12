@@ -476,6 +476,69 @@ function resolveArtifactByName(
     return null;
 }
 
+function selectSourceClass(
+    name: string,
+    doc: TextDocument,
+    project: GrailsProject,
+) {
+    const candidates = project.sourceClassesBySimpleName.get(name) ?? [];
+    if (candidates.length <= 1) return candidates[0] ?? null;
+    const imported = new Set(
+        [...doc.getText().matchAll(/^\s*import\s+([\w.]+)$/gm)].map(
+            (match) => match[1],
+        ),
+    );
+    return (
+        candidates.find((candidate) => imported.has(candidate.qualifiedName)) ??
+        candidates[0]
+    );
+}
+
+function resolveSourceSymbol(
+    word: string,
+    line: string,
+    doc: TextDocument,
+    project: GrailsProject,
+): Location | null {
+    const directClass = selectSourceClass(word, doc, project);
+    if (directClass)
+        return toLocation(directClass.filePath, directClass.line);
+
+    const memberAccess = new RegExp(`\\b([A-Za-z_]\\w*)\\??\\.\\s*${word}\\b`).exec(
+        line,
+    );
+    if (!memberAccess) return null;
+
+    const receiver = memberAccess[1];
+    let sourceName = /^[A-Z]/.test(receiver) ? receiver : null;
+    if (!sourceName) {
+        const escaped = receiver.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const patterns = [
+            new RegExp(`\\b([A-Z]\\w*)\\s+${escaped}\\b`),
+            new RegExp(
+                `\\b(?:def|var)\\s+${escaped}\\s*=\\s*new\\s+([A-Z]\\w*)\\b`,
+            ),
+            new RegExp(
+                `\\b(?:def|var)\\s+${escaped}\\s*=\\s*([A-Z]\\w*)\\s*[.(]`,
+            ),
+        ];
+        for (const pattern of patterns) {
+            const match = pattern.exec(doc.getText());
+            if (match) {
+                sourceName = match[1];
+                break;
+            }
+        }
+    }
+    if (!sourceName) return null;
+
+    const sourceClass = selectSourceClass(sourceName, doc, project);
+    const member = sourceClass?.members.find((candidate) => candidate.name === word);
+    return sourceClass && member
+        ? toLocation(sourceClass.filePath, member.line)
+        : null;
+}
+
 function resolveGspTag(
     line: string,
     project: GrailsProject,
@@ -578,6 +641,10 @@ export function getDefinition(
     const artifactLoc = resolveArtifactByName(word, project);
     if (artifactLoc) return artifactLoc;
 
-    // 9. FIX #3: local method in same controller (renderResponse, any def)
+    // 9. Project Groovy/Java type or member.
+    const sourceLoc = resolveSourceSymbol(word, line, doc, project);
+    if (sourceLoc) return sourceLoc;
+
+    // 10. FIX #3: local method in same controller (renderResponse, any def)
     return resolveLocalMethod(word, line, filePath) ?? null;
 }

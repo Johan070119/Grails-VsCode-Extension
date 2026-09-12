@@ -25,6 +25,7 @@ type CompletionKind =
     | "gorm_instance" // book.|
     | "service_injection" // bookService.|
     | "controller_static" // SwaggerController.|
+    | "source_members" // ProjectGroovyOrJavaClass.| or typedVariable.|
     | "string_controller" // controller: "b|"  or  controller: '|'
     | "string_action" // action: "lo|"  — needs controller context
     | "string_view" // view: "/lay|"  or  view: "sh|"
@@ -48,6 +49,7 @@ interface CompletionContext {
     importedNames?: Set<string>;
     // For controller_static: the controller class name
     controllerName?: string;
+    sourceName?: string;
     // For artifact_name: the typed prefix
     artifactPrefix?: string;
 }
@@ -125,6 +127,25 @@ function parseImportedNames(
     }
 
     return imported;
+}
+
+function resolveSourceNameForVariable(
+    variableName: string,
+    docText: string,
+    project: GrailsProject,
+): string | null {
+    const escaped = variableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const patterns = [
+        new RegExp(`\\b([A-Z]\\w*)\\s+${escaped}\\b`),
+        new RegExp(`\\b(?:def|var)\\s+${escaped}\\s*=\\s*new\\s+([A-Z]\\w*)\\b`),
+        new RegExp(`\\b(?:def|var)\\s+${escaped}\\s*=\\s*([A-Z]\\w*)\\s*[.(]`),
+    ];
+    for (const pattern of patterns) {
+        const match = pattern.exec(docText);
+        if (match && project.sourceClassesBySimpleName.has(match[1]))
+            return match[1];
+    }
+    return null;
 }
 
 function detectContext(
@@ -237,6 +258,10 @@ function detectContext(
                 return { kind: "service_injection", instanceName: candidate };
             }
         }
+
+        if (project?.sourceClassesBySimpleName.has(candidate)) {
+            return { kind: "source_members", sourceName: candidate };
+        }
     }
     // ── GORM static: Book.| (simple, no package prefix) ─────────────────────
     const staticMatch = /([A-Z]\w+)\.(\w*)$/.exec(lineUpTo);
@@ -297,7 +322,12 @@ function detectContext(
             const hasServiceMatch = [...project.services.keys()].some((s) =>
                 s.toLowerCase().startsWith(lowerTyped),
             );
-            if (hasControllerMatch || hasServiceMatch) {
+            const hasSourceMatch = [
+                ...project.sourceClassesBySimpleName.keys(),
+            ].some((sourceName) =>
+                sourceName.toLowerCase().startsWith(lowerTyped),
+            );
+            if (hasControllerMatch || hasServiceMatch || hasSourceMatch) {
                 return { kind: "artifact_name", artifactPrefix: typed };
             }
         }
@@ -318,6 +348,12 @@ function detectContext(
         if (domainName) {
             return { kind: "gorm_instance", domainName, instanceName: varName };
         }
+        const sourceName = resolveSourceNameForVariable(
+            varName,
+            doc.getText(),
+            project,
+        );
+        if (sourceName) return { kind: "source_members", sourceName };
     }
 
     return { kind: "generic_grails" };
@@ -379,6 +415,22 @@ function importCompletions(
         });
     }
 
+
+    const existing = new Set(allPaths.map((entry) => entry.packagePath));
+    for (const sourceClass of project.sourceClasses.values()) {
+        if (existing.has(sourceClass.qualifiedName)) continue;
+        allPaths.push({
+            packagePath: sourceClass.qualifiedName,
+            kind:
+                sourceClass.declarationKind === "interface"
+                    ? CompletionItemKind.Interface
+                    : sourceClass.declarationKind === "enum"
+                      ? CompletionItemKind.Enum
+                      : CompletionItemKind.Class,
+            detail: `${sourceClass.language} ${sourceClass.declarationKind}: ${sourceClass.name}`,
+        });
+    }
+
     for (const { packagePath, kind, detail } of allPaths) {
         // Filter: package must contain the typed text anywhere (fuzzy-friendly)
         // or start with the typed prefix (exact prefix match)
@@ -404,6 +456,36 @@ function importCompletions(
         });
     }
 
+    return items;
+}
+
+function sourceMemberCompletions(
+    sourceName: string,
+    project: GrailsProject,
+): CompletionItem[] {
+    const candidates = project.sourceClassesBySimpleName.get(sourceName) ?? [];
+    const seen = new Set<string>();
+    const items: CompletionItem[] = [];
+    for (const candidate of candidates) {
+        for (const member of candidate.members) {
+            const key = `${member.kind}:${member.name}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            items.push({
+                label: member.name,
+                kind:
+                    member.kind === "method"
+                        ? CompletionItemKind.Method
+                        : CompletionItemKind.Property,
+                detail: `${candidate.qualifiedName} — ${member.kind}`,
+                insertText:
+                    member.kind === "method"
+                        ? `${member.name}($1)`
+                        : member.name,
+                insertTextFormat: member.kind === "method" ? 2 : 1,
+            });
+        }
+    }
     return items;
 }
 
@@ -1241,6 +1323,29 @@ function artifactNameCompletions(
         });
     }
 
+    const existingNames = new Set(items.map((item) => String(item.label)));
+    for (const [name, candidates] of project.sourceClassesBySimpleName) {
+        if (existingNames.has(name) || !name.toLowerCase().startsWith(lower))
+            continue;
+        const candidate = candidates[0];
+        items.push({
+            label: name,
+            kind:
+                candidate.declarationKind === "interface"
+                    ? CompletionItemKind.Interface
+                    : candidate.declarationKind === "enum"
+                      ? CompletionItemKind.Enum
+                      : CompletionItemKind.Class,
+            detail:
+                candidates.length === 1
+                    ? candidate.qualifiedName
+                    : `${candidates.length} project types named ${name}`,
+            insertText: name,
+            filterText: name,
+            commitCharacters: ["."],
+        });
+    }
+
     return items;
 }
 
@@ -1336,6 +1441,11 @@ export function getCompletions(
         case "service_injection":
             return project && ctx.instanceName
                 ? serviceMethodCompletions(ctx.instanceName, project)
+                : [];
+
+        case "source_members":
+            return project && ctx.sourceName
+                ? sourceMemberCompletions(ctx.sourceName, project)
                 : [];
 
         case "artifact_name":

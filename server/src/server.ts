@@ -8,13 +8,17 @@ import {
     CompletionItem,
     TextDocumentPositionParams,
     DidChangeWatchedFilesParams,
-    FileChangeType,
     Location,
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { GrailsIndexer } from "./indexer";
 import { getCompletions } from "./completion";
 import { getDefinition } from "./definition";
+import {
+    getDocumentSymbols,
+    getHover,
+    getWorkspaceSymbols,
+} from "./languageFeatures";
 import { uriToPath } from "./uriUtils";
 
 const connection = createConnection(ProposedFeatures.all);
@@ -74,6 +78,9 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
                 ],
             },
             definitionProvider: true,
+            hoverProvider: true,
+            documentSymbolProvider: true,
+            workspaceSymbolProvider: true,
             workspace: {
                 workspaceFolders: { supported: true },
             },
@@ -92,7 +99,7 @@ connection.onCompletion(
         const doc = documents.get(params.textDocument.uri);
         if (!doc) return [];
 
-        const project = indexer.getProject();
+        const project = indexer.getProject(uriToPath(params.textDocument.uri));
         return getCompletions(doc, params, project);
     },
 );
@@ -103,18 +110,50 @@ connection.onDefinition(
     (params: TextDocumentPositionParams): Location | null => {
         const doc = documents.get(params.textDocument.uri);
         if (!doc) return null;
-        return getDefinition(doc, params, indexer.getProject());
+        return getDefinition(
+            doc,
+            params,
+            indexer.getProject(uriToPath(params.textDocument.uri)),
+        );
     },
+);
+
+connection.onHover((params) => {
+    const doc = documents.get(params.textDocument.uri);
+    if (!doc) return null;
+    return getHover(
+        doc,
+        params,
+        indexer.getProject(uriToPath(params.textDocument.uri)),
+    );
+});
+
+connection.onDocumentSymbol((params) => {
+    const doc = documents.get(params.textDocument.uri);
+    if (!doc) return [];
+    return getDocumentSymbols(
+        doc,
+        indexer.getProject(uriToPath(params.textDocument.uri)),
+    );
+});
+
+connection.onWorkspaceSymbol((params) =>
+    getWorkspaceSymbols(params.query, indexer.getProjects()),
 );
 
 // ─── File watching ────────────────────────────────────────────────────────────
 
 connection.onDidChangeWatchedFiles((params: DidChangeWatchedFilesParams) => {
     for (const change of params.changes) {
-        if (change.type !== FileChangeType.Deleted) {
-            indexer.onFileChanged(uriToPath(change.uri));
-        }
+        indexer.onFileChanged(uriToPath(change.uri));
     }
+});
+
+connection.workspace.onDidChangeWorkspaceFolders((params) => {
+    for (const folder of params.removed)
+        indexer.removeWorkspaceFolder(uriToPath(folder.uri));
+    for (const folder of params.added)
+        indexer.addWorkspaceFolder(uriToPath(folder.uri));
 });
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
