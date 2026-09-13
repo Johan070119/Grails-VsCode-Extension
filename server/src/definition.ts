@@ -434,13 +434,15 @@ function resolveGormStaticCall(
     // findByNombreAndTipo   → "nombre" (first property)
     // countByActivo         → "activo"
     const dynamicRe =
-        /^(?:findAll?By|listBy|countBy|existsBy|getBy)([A-Z][a-zA-Z]*)/.exec(
+        /^(?:find(?:All)?By|findOrCreateBy|findOrSaveBy|listBy|countBy|existsBy|getBy)([A-Z][a-zA-Z]*)/.exec(
             methodName,
         );
     if (dynamicRe) {
         let rawProp = dynamicRe[1];
         // Strip trailing compound: "NombreAndTipo" → "Nombre"
-        rawProp = rawProp.replace(/(?:And|Or)[A-Z].*$/, "");
+        rawProp = rawProp
+            .replace(/(?:And|Or)[A-Z].*$/, "")
+            .replace(/(?:LessThanEquals|GreaterThanEquals|LessThan|GreaterThan|Between|Ilike|Like|IsNotNull|IsNull|NotEqual|InList|Not)$/, "");
         const propName = rawProp.charAt(0).toLowerCase() + rawProp.slice(1);
 
         const prop = domain.properties.find((p) => p.name === propName);

@@ -3,20 +3,20 @@
 [![Version](https://img.shields.io/visual-studio-marketplace/v/JohanMixtegaCisneros.grails-extension-vscode)](https://marketplace.visualstudio.com/items?itemName=JohanMixtegaCisneros.grails-extension-vscode)
 [![Installs](https://img.shields.io/visual-studio-marketplace/i/JohanMixtegaCisneros.grails-extension-vscode)](https://marketplace.visualstudio.com/items?itemName=JohanMixtegaCisneros.grails-extension-vscode)
 ![Grails](https://img.shields.io/badge/Grails-2.5.6%20%7C%207.1.x-green)
-![VS Code](https://img.shields.io/badge/VS%20Code-1.80+-blue)
+![VS Code](https://img.shields.io/badge/VS%20Code-1.82+-blue)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue)](LICENSE.md)
 
 Soporte para desarrollar aplicaciones Grails en Visual Studio Code, inspirado en la experiencia de IntelliJ IDEA. Grails 7.1.x es la prioridad actual y Grails 2.5.6 se mantiene como carril de regresión; otras versiones permanecen experimentales hasta completar su matriz de pruebas.
 
-## Novedades de la versión 0.6.0
+## Novedades de la versión 0.7.0
 
-- DSL contextual de GORM para `constraints`, `mapping`, criteria y `where`.
-- Dynamic finders con operadores (`Ilike`, `Between`, `GreaterThan`, `InList`, etc.).
-- API GORM ampliada: `getAll`, `read`, `load`, `whereAny`, transacciones, dirty checking y asociaciones.
-- Lenguaje GSP propio con HTML/Groovy/JavaScript/CSS embebidos.
-- Completion de tags `g:`/`asset:`, atributos, controllers, actions, templates, layouts y assets.
-- Ctrl/Cmd+Click desde GSP hacia TagLibs, controllers/actions, templates, layouts y recursos estáticos.
-- Hover, outline y diagnósticos rápidos específicos de GSP.
+- Fusión y deduplicación de completion, definición, referencias, hover y símbolos entre el servidor Grails TypeScript y el servidor semántico JVM.
+- Lifecycle reiniciable y cancelable del servidor JVM, con timeout de inicio, límite de memoria, reinicio manual y soporte multi-root.
+- Find References, rename y Call Hierarchy conscientes de clases, artefactos, actions, views e imports/package de Grails.
+- Completion, navegación, referencias y rename sobre el contenido actual de archivos Groovy/Java sin guardar.
+- Pruebas reales en VS Code Extension Host 1.82.3 y estable, incluida la integración JVM.
+- Presupuestos reproducibles de indexación, referencias, completion y memoria verificados con TimeShare 2.5.6 y TimeShare7 7.1.1.
+- Empaquetado verificable: el VSIX se rechaza si falta el servidor JVM, sus avisos/licencias o los servidores compilados, o si contiene fuentes/tests.
 
 ---
 
@@ -113,6 +113,16 @@ class BookController {
 
 ---
 
+### ♻️ Referencias, rename y jerarquía de llamadas
+
+- `Find All References` entiende nombres de clases, services inyectados, controllers/actions, views/templates y declaraciones `package`/`import`.
+- `Rename Symbol` actualiza referencias y, cuando corresponde, renombra el archivo de la clase, vista o template mediante `WorkspaceEdit`.
+- `Call Hierarchy` muestra llamadas entrantes y salientes entre métodos/actions del código del proyecto.
+- Las operaciones Grails tienen prioridad; el servidor JVM completa los casos genéricos de Groovy/Java cuando está habilitado.
+- Completion, referencias y rename leen el texto sin guardar de los documentos abiertos.
+
+---
+
 ### 🏗️ Vista de Proyecto (panel lateral)
 
 Un panel dedicado en la barra de actividad muestra solo las carpetas relevantes de tu proyecto Grails, similar a IntelliJ IDEA. Muestra la versión detectada de Grails al inicio del árbol.
@@ -203,13 +213,17 @@ def show() {
 
 ## Compatibilidad
 
-| Grails | Spring Boot | Groovy | Java | Estado |
-|---|---|---|---|---|
-| 2.5.6 | — | 2.x | 7+ | Compatibilidad mantenida y usada como regresión |
-| 3.x–5.x | Variable | 2.x–3.x | Variable | Compatibilidad básica; falta matriz completa |
-| 6.x | 3.x | 4.x | 17+ | Experimental |
-| 7.1.x | 3.x | 4.x | 17+ | Desarrollo prioritario |
-| 8.x | — | — | — | Planificado |
+La matriz distingue lo que se ejecuta continuamente de lo que aún es una promesa experimental:
+
+| Grails | Modelo/GORM | GSP/navegación | References/rename | Presupuesto real | Estado |
+|---|---|---|---|---|---|
+| 2.5.6 | Probado | Probado | Probado | TimeShare | Regresión mantenida |
+| 3.x–5.x | Básico | Básico | Experimental | — | Sin matriz completa |
+| 6.x | Básico | Básico | Experimental | — | Experimental |
+| 7.1.1 | Probado | Probado | Probado | TimeShare7 | Prioridad y versión recomendada |
+| 8.x | — | — | — | — | Planificado |
+
+La integración completa se prueba con VS Code 1.82.3 y con la versión estable. El servidor JVM requiere JDK 17 o superior; el servidor TypeScript y las funciones Grails rápidas siguen disponibles cuando la semántica JVM está desactivada o no puede iniciarse.
 
 Detección automática de versión desde `gradle.properties`, `build.gradle`, `build.gradle.kts` y `application.properties`.
 
@@ -217,7 +231,7 @@ Detección automática de versión desde `gradle.properties`, `build.gradle`, `b
 
 ## Requisitos
 
-- VS Code 1.80.0 o superior
+- VS Code 1.82.0 o superior
 - Un proyecto que contenga la carpeta `grails-app/`
 - Node.js (incluido con VS Code)
 
@@ -225,15 +239,17 @@ Detección automática de versión desde `gradle.properties`, `build.gradle`, `b
 
 Los archivos `.gsp` tienen un modo de lenguaje dedicado. La extensión combina la gramática HTML con expresiones y scriptlets Groovy, además de JavaScript y CSS embebidos. El servidor Grails aporta tags, atributos, rutas, navegación y diagnósticos; la validación semántica completa mediante documentos virtuales continúa en desarrollo.
 
-### Servidor semántico experimental
+### Servidor semántico JVM
 
-La versión 0.6.0 incluye el servidor Groovy JVM, pero permanece desactivado por defecto mientras se completa la fusión de resultados con el servidor Grails. Para probarlo:
+La versión 0.7.0 integra el servidor Groovy JVM con el servidor Grails y deduplica sus respuestas. Permanece desactivado por defecto porque su classpath compiler-backed todavía debe validarse contra más combinaciones de Grails, Groovy y plugins. Para activarlo:
 
 1. Instala un JDK 17 o superior.
 2. Abre un workspace confiable.
 3. Activa `grails.semantic.enabled` en Settings.
 
 La extensión obtiene el classpath y los source sets mediante el Gradle Wrapper sin modificar el build. El JDK se toma de `grails.semantic.java.home`, `java.jdt.ls.java.home` o `JAVA_HOME`, en ese orden. Puedes desactivar la resolución Gradle con `grails.semantic.gradle.autoClasspath` o proporcionar entradas adicionales mediante `grails.semantic.classpath`.
+
+Cada proyecto usa su propio proceso JVM. `grails.semantic.java.maxHeapMb` limita su heap y `grails.semantic.startupTimeout` evita inicios bloqueados. Los cambios de configuración, carpetas del workspace o confianza reinician los procesos de forma serial y cancelable; también puedes ejecutar `Grails: Reiniciar Servidor Semántico`.
 
 Consulta [la arquitectura](docs/ARCHITECTURE.md), [el plan](docs/IMPLEMENTATION_PLAN.md) y [el estado](docs/IMPLEMENTATION_STATUS.md).
 
@@ -251,14 +267,14 @@ Consulta [la arquitectura](docs/ARCHITECTURE.md), [el plan](docs/IMPLEMENTATION_
 ### Desde VSIX
 
 ```bash
-code --install-extension grails-extension-vscode-0.6.0.vsix
+code --install-extension grails-extension-vscode-0.7.0.vsix
 ```
 
 ---
 
 ## Uso
 
-La extensión se activa automáticamente al abrir cualquier carpeta que contenga `grails-app/`. El indexado del proyecto ocurre al iniciar y se actualiza automáticamente cuando guardas archivos `.groovy`.
+La extensión se activa automáticamente al abrir cualquier carpeta que contenga `grails-app/`. El indexado del proyecto ocurre al iniciar, se actualiza al cambiar archivos y usa el contenido de los buffers abiertos aun antes de guardarlos.
 
 Para ver los logs del servidor LSP: `Ver → Output → Grails Language Server`
 

@@ -103,12 +103,11 @@ function bracesAreOpen(text: string, marker: RegExp): boolean {
     return depth > 0;
 }
 
-function domainForDocument(document: TextDocument, project: GrailsProject): DomainClass | null {
+function domainForDocument(document: TextDocument, before: string, project: GrailsProject): DomainClass | null {
     const file = uriToPath(document.uri);
     for (const domain of project.domains.values()) {
         if (domain.filePath === file) return domain;
     }
-    const before = document.getText();
     const matches = [...before.matchAll(/\b([A-Z]\w*)\.(?:withCriteria|where|whereAny|createCriteria)\b/g)];
     return project.domains.get(matches[matches.length - 1]?.[1] ?? "") ?? null;
 }
@@ -142,7 +141,7 @@ export function getGormDslCompletions(
 ): CompletionItem[] | null {
     if (!uriToPath(document.uri).endsWith(".groovy")) return null;
     const before = document.getText().slice(0, document.offsetAt(params.position));
-    const domain = domainForDocument(document, project);
+    const domain = domainForDocument(document, before, project);
 
     if (bracesAreOpen(before, /static\s+constraints\s*=\s*\{/g)) {
         const currentLine = before.slice(before.lastIndexOf("\n") + 1);
@@ -160,10 +159,11 @@ export function getGormDslCompletions(
         return [...MAPPINGS.map(item), ...mappingPropertyItems(domain)];
     }
 
-    if (
-        bracesAreOpen(before, /\.(?:withCriteria|where|whereAny)\s*\{/g) ||
-        bracesAreOpen(before, /\.(?:list|get|count|scroll)\s*\{/g)
-    ) {
+    if (bracesAreOpen(before, /\.(?:where|whereAny)\s*\{/g)) {
+        return propertyItems(domain, false);
+    }
+
+    if (bracesAreOpen(before, /\.withCriteria\s*\{/g) || bracesAreOpen(before, /\.(?:list|get|count|scroll)\s*\{/g)) {
         return [...CRITERIA.map(item), ...propertyItems(domain, true)];
     }
 

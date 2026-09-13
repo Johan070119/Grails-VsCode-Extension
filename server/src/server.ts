@@ -21,14 +21,25 @@ import {
 } from "./languageFeatures";
 import { uriToPath } from "./uriUtils";
 import { getGspDiagnostics } from "./gspFeatures";
+import {
+    getCodeLenses,
+    getReferences,
+    getRenameEdit,
+    incomingCalls,
+    outgoingCalls,
+    prepareCallHierarchy,
+    prepareRename,
+} from "./navigationFeatures";
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
 const indexer = new GrailsIndexer(connection);
+let supportsWorkspaceFolderEvents = false;
 
 // ─── Initialize ───────────────────────────────────────────────────────────────
 
 connection.onInitialize((params: InitializeParams): InitializeResult => {
+    supportsWorkspaceFolderEvents = params.capabilities.workspace?.workspaceFolders === true;
     const folders = params.workspaceFolders?.map((f) => uriToPath(f.uri)) ?? [];
 
     if (folders.length > 0) {
@@ -85,6 +96,10 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
                 ],
             },
             definitionProvider: true,
+            referencesProvider: true,
+            renameProvider: { prepareProvider: true },
+            callHierarchyProvider: true,
+            codeLensProvider: { resolveProvider: false },
             hoverProvider: true,
             documentSymbolProvider: true,
             workspaceSymbolProvider: true,
@@ -94,7 +109,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
         },
         serverInfo: {
             name: "Grails Language Server",
-            version: "1.0.0",
+            version: "0.7.0",
         },
     };
 });
@@ -124,6 +139,53 @@ connection.onDefinition(
         );
     },
 );
+
+connection.onReferences((params) => {
+    const doc = documents.get(params.textDocument.uri);
+    if (!doc) return [];
+    return getReferences(
+        doc,
+        params,
+        indexer.getProject(uriToPath(params.textDocument.uri)),
+        params.context.includeDeclaration,
+    );
+});
+
+connection.onPrepareRename((params) => {
+    const doc = documents.get(params.textDocument.uri);
+    if (!doc) return null;
+    return prepareRename(doc, params, indexer.getProject(uriToPath(params.textDocument.uri)));
+});
+
+connection.onRenameRequest((params) => {
+    const doc = documents.get(params.textDocument.uri);
+    if (!doc) return null;
+    return getRenameEdit(doc, params, indexer.getProject(uriToPath(params.textDocument.uri)));
+});
+
+connection.languages.callHierarchy.onPrepare((params) => {
+    const doc = documents.get(params.textDocument.uri);
+    if (!doc) return null;
+    return prepareCallHierarchy(doc, params, indexer.getProject(uriToPath(params.textDocument.uri)));
+});
+
+connection.languages.callHierarchy.onIncomingCalls((params) => {
+    const root = (params.item.data as { root?: string } | undefined)?.root;
+    const project = indexer.getProjects().find((candidate) => candidate.root === root) ?? null;
+    return incomingCalls(params.item, project);
+});
+
+connection.languages.callHierarchy.onOutgoingCalls((params) => {
+    const root = (params.item.data as { root?: string } | undefined)?.root;
+    const project = indexer.getProjects().find((candidate) => candidate.root === root) ?? null;
+    return outgoingCalls(params.item, project);
+});
+
+connection.onCodeLens((params) => {
+    const doc = documents.get(params.textDocument.uri);
+    if (!doc) return [];
+    return getCodeLenses(doc, indexer.getProject(uriToPath(params.textDocument.uri)));
+});
 
 connection.onHover((params) => {
     const doc = documents.get(params.textDocument.uri);
@@ -156,11 +218,18 @@ function publishDocumentDiagnostics(document: TextDocument): void {
     });
 }
 
-documents.onDidOpen((event) => publishDocumentDiagnostics(event.document));
-documents.onDidChangeContent((event) => publishDocumentDiagnostics(event.document));
-documents.onDidClose((event) =>
-    connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] }),
-);
+documents.onDidOpen((event) => {
+    indexer.onOpenDocumentChanged(uriToPath(event.document.uri), event.document.getText());
+    publishDocumentDiagnostics(event.document);
+});
+documents.onDidChangeContent((event) => {
+    indexer.onOpenDocumentChanged(uriToPath(event.document.uri), event.document.getText());
+    publishDocumentDiagnostics(event.document);
+});
+documents.onDidClose((event) => {
+    indexer.onOpenDocumentClosed(uriToPath(event.document.uri));
+    connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
+});
 
 // ─── File watching ────────────────────────────────────────────────────────────
 
@@ -170,11 +239,14 @@ connection.onDidChangeWatchedFiles((params: DidChangeWatchedFilesParams) => {
     }
 });
 
-connection.workspace.onDidChangeWorkspaceFolders((params) => {
-    for (const folder of params.removed)
-        indexer.removeWorkspaceFolder(uriToPath(folder.uri));
-    for (const folder of params.added)
-        indexer.addWorkspaceFolder(uriToPath(folder.uri));
+connection.onInitialized(() => {
+    if (!supportsWorkspaceFolderEvents) return;
+    connection.workspace.onDidChangeWorkspaceFolders((params) => {
+        for (const folder of params.removed)
+            indexer.removeWorkspaceFolder(uriToPath(folder.uri));
+        for (const folder of params.added)
+            indexer.addWorkspaceFolder(uriToPath(folder.uri));
+    });
 });
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────

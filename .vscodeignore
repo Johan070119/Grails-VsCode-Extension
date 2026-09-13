@@ -1,4 +1,6 @@
 .vscode/
+artifacts/
+performance-budgets.json
 .github/
 .gitignore
 src/
@@ -18,3 +20,5 @@ server/tsconfig.json
 **/*.map
 **/.eslintrc*
 **/tsconfig*.json
+!dist/**/*.js
+!server/dist/**/*.js

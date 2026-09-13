@@ -8,6 +8,16 @@ import {
     TransportKind,
 } from "vscode-languageclient/node";
 import {
+    CompletionRequest,
+    DefinitionRequest,
+    DocumentSymbolRequest,
+    HoverRequest,
+    PrepareRenameRequest,
+    ReferencesRequest,
+    RenameRequest,
+    WorkspaceSymbolRequest,
+} from "vscode-languageserver-protocol";
+import {
     isPathWithin,
     isSafeEntryName,
     resolvePathWithin,
@@ -17,10 +27,16 @@ import {
     quoteTerminalArgument,
     resolveGrailsCommand,
 } from "./grailsCommand";
-import { startSemanticClients } from "./semanticClient";
+import { SemanticClientManager } from "./semanticClient";
+import {
+    locationKey,
+    mergeCompletionItems,
+    mergeByKey,
+    symbolKey,
+} from "./resultMerge";
 
 let client: LanguageClient;
-let semanticClients: LanguageClient[] = [];
+let semanticManager: SemanticClientManager | undefined;
 let treeProvider: GrailsProjectProvider;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1007,9 +1023,192 @@ function registerContextCommands(ctx: vscode.ExtensionContext): void {
     );
 }
 
+// ─── Language result fusion ──────────────────────────────────────────────────
+
+async function semanticResult<T>(
+    document: vscode.TextDocument,
+    token: vscode.CancellationToken,
+    request: (semanticClient: LanguageClient) => Promise<T>,
+): Promise<T | undefined> {
+    const semanticClient = semanticManager?.getClient(document.uri);
+    if (!semanticClient || token.isCancellationRequested) return undefined;
+    try {
+        return await request(semanticClient);
+    } catch (error) {
+        if (!token.isCancellationRequested) {
+            const detail = error instanceof Error ? error.message : String(error);
+            console.warn(`[Grails] Falló una consulta semántica; se usará el fallback TypeScript: ${detail}`);
+        }
+        return undefined;
+    }
+}
+
+function createFusionMiddleware(): NonNullable<LanguageClientOptions["middleware"]> {
+    return {
+        provideCompletionItem: async (document, position, context, token, next) => {
+            const grails = await next(document, position, context, token);
+            const semantic = await semanticResult(document, token, async (semanticClient) => {
+                const result = await semanticClient.sendRequest(
+                    CompletionRequest.type,
+                    semanticClient.code2ProtocolConverter.asCompletionParams(document, position, context),
+                    token,
+                );
+                return semanticClient.protocol2CodeConverter.asCompletionResult(result, undefined, token);
+            });
+            if (!semantic) return grails;
+            const grailsItems = Array.isArray(grails) ? grails : grails?.items ?? [];
+            const semanticItems = Array.isArray(semantic) ? semantic : semantic.items;
+            const items = mergeCompletionItems(grailsItems, semanticItems);
+            if (grails instanceof vscode.CompletionList || semantic instanceof vscode.CompletionList) {
+                return new vscode.CompletionList(
+                    items,
+                    (grails instanceof vscode.CompletionList && grails.isIncomplete) ||
+                        (semantic instanceof vscode.CompletionList && semantic.isIncomplete),
+                );
+            }
+            return items;
+        },
+        provideDefinition: async (document, position, token, next) => {
+            const grails = await next(document, position, token);
+            const semantic = await semanticResult(document, token, async (semanticClient) => {
+                const result = await semanticClient.sendRequest(
+                    DefinitionRequest.type,
+                    semanticClient.code2ProtocolConverter.asTextDocumentPositionParams(document, position),
+                    token,
+                );
+                return semanticClient.protocol2CodeConverter.asDefinitionResult(result, token);
+            });
+            const grailsItems = grails == null ? [] : Array.isArray(grails) ? grails : [grails];
+            const semanticItems = semantic == null ? [] : Array.isArray(semantic) ? semantic : [semantic];
+            const grailsUsesLocations = grailsItems.length === 0 || "uri" in grailsItems[0];
+            const semanticUsesLocations = semanticItems.length === 0 || "uri" in semanticItems[0];
+            if (grailsUsesLocations && semanticUsesLocations) {
+                const merged = mergeByKey<vscode.Location>(
+                    grailsItems as vscode.Location[],
+                    semanticItems as vscode.Location[],
+                    locationKey,
+                );
+                return merged.length > 0 ? merged : undefined;
+            }
+            if (!grailsUsesLocations && !semanticUsesLocations) {
+                const merged = mergeByKey<vscode.LocationLink>(
+                    grailsItems as vscode.LocationLink[],
+                    semanticItems as vscode.LocationLink[],
+                    locationKey,
+                );
+                return merged.length > 0 ? merged : undefined;
+            }
+            return (grailsItems.length > 0 ? grailsItems : semanticItems) as
+                | vscode.Location[]
+                | vscode.LocationLink[];
+        },
+        provideReferences: async (document, position, options, token, next) => {
+            const grails = await next(document, position, options, token);
+            const semantic = await semanticResult(document, token, async (semanticClient) => {
+                const result = await semanticClient.sendRequest(
+                    ReferencesRequest.type,
+                    semanticClient.code2ProtocolConverter.asReferenceParams(document, position, options),
+                    token,
+                );
+                return semanticClient.protocol2CodeConverter.asReferences(result, token);
+            });
+            return mergeByKey(grails, semantic, locationKey);
+        },
+        provideHover: async (document, position, token, next) => {
+            const grails = await next(document, position, token);
+            const semantic = await semanticResult(document, token, async (semanticClient) => {
+                const result = await semanticClient.sendRequest(
+                    HoverRequest.type,
+                    semanticClient.code2ProtocolConverter.asTextDocumentPositionParams(document, position),
+                    token,
+                );
+                return semanticClient.protocol2CodeConverter.asHover(result);
+            });
+            if (!grails) return semantic;
+            if (!semantic) return grails;
+            const contents = mergeByKey(
+                grails.contents,
+                semantic.contents,
+                (content) => typeof content === "string" ? content : content.value,
+            );
+            return new vscode.Hover(contents, grails.range ?? semantic.range);
+        },
+        prepareRename: async (document, position, token, next) => {
+            const grails = await next(document, position, token);
+            if (grails) return grails;
+            return semanticResult(document, token, async (semanticClient) => {
+                const result = await semanticClient.sendRequest(
+                    PrepareRenameRequest.type,
+                    semanticClient.code2ProtocolConverter.asTextDocumentPositionParams(document, position),
+                    token,
+                );
+                if (!result || "defaultBehavior" in result) return undefined;
+                if ("range" in result) {
+                    return {
+                        range: semanticClient.protocol2CodeConverter.asRange(result.range),
+                        placeholder: result.placeholder,
+                    };
+                }
+                return semanticClient.protocol2CodeConverter.asRange(result);
+            });
+        },
+        provideRenameEdits: async (document, position, newName, token, next) => {
+            const grails = await next(document, position, newName, token);
+            if (grails) return grails;
+            return semanticResult(document, token, async (semanticClient) => {
+                const base = semanticClient.code2ProtocolConverter.asTextDocumentPositionParams(document, position);
+                const result = await semanticClient.sendRequest(
+                    RenameRequest.type,
+                    { ...base, newName },
+                    token,
+                );
+                return semanticClient.protocol2CodeConverter.asWorkspaceEdit(result, token);
+            });
+        },
+        provideDocumentSymbols: async (document, token, next) => {
+            const grails = await next(document, token);
+            const semantic = await semanticResult(document, token, async (semanticClient) => {
+                const result = await semanticClient.sendRequest(
+                    DocumentSymbolRequest.type,
+                    semanticClient.code2ProtocolConverter.asDocumentSymbolParams(document),
+                    token,
+                );
+                if (!result || result.length === 0) return [];
+                return "location" in result[0]
+                    ? semanticClient.protocol2CodeConverter.asSymbolInformations(result as any, token)
+                    : semanticClient.protocol2CodeConverter.asDocumentSymbols(result as any, token);
+            });
+            return grails && grails.length > 0 ? grails : semantic;
+        },
+        provideWorkspaceSymbols: async (query, token, next) => {
+            const grails = await next(query, token);
+            const semanticGroups = await Promise.all(
+                (semanticManager?.getClients() ?? []).map(async (semanticClient) => {
+                    try {
+                        const result = await semanticClient.sendRequest(
+                            WorkspaceSymbolRequest.type,
+                            { query },
+                            token,
+                        );
+                        return await semanticClient.protocol2CodeConverter.asSymbolInformations(result, token) ?? [];
+                    } catch {
+                        return [];
+                    }
+                }),
+            );
+            return mergeByKey<vscode.SymbolInformation>(
+                grails,
+                semanticGroups.flat(),
+                symbolKey,
+            );
+        },
+    };
+}
+
 // ─── Activate ─────────────────────────────────────────────────────────────────
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
+    semanticManager = new SemanticClientManager(context);
     // LSP client
     const serverModule = context.asAbsolutePath(
         path.join("server", "dist", "server.js"),
@@ -1026,19 +1225,74 @@ export function activate(context: vscode.ExtensionContext) {
                 { scheme: "file", language: "groovy" },
                 { scheme: "file", language: "gsp" },
             ],
+            middleware: createFusionMiddleware(),
         } as LanguageClientOptions,
     );
-    client.start();
-    void startSemanticClients(context)
-        .then((startedClients) => {
-            semanticClients = startedClients;
-        })
-        .catch((error) => {
+    await client.start();
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            "grails.showReferences",
+            (
+                uri: string,
+                position: { line: number; character: number },
+                references: Array<{
+                    uri: string;
+                    range: {
+                        start: { line: number; character: number };
+                        end: { line: number; character: number };
+                    };
+                }>,
+            ) =>
+                vscode.commands.executeCommand(
+                    "editor.action.showReferences",
+                    vscode.Uri.parse(uri),
+                    new vscode.Position(position.line, position.character),
+                    references.map(
+                        (reference) =>
+                            new vscode.Location(
+                                vscode.Uri.parse(reference.uri),
+                                new vscode.Range(
+                                    reference.range.start.line,
+                                    reference.range.start.character,
+                                    reference.range.end.line,
+                                    reference.range.end.character,
+                                ),
+                            ),
+                    ),
+                ),
+        ),
+        vscode.commands.registerCommand(
+            "grails.openLocation",
+            async (uri: string, position: { line: number; character: number }) => {
+                const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(uri));
+                const editor = await vscode.window.showTextDocument(document);
+                const target = new vscode.Position(position.line, position.character);
+                editor.selection = new vscode.Selection(target, target);
+                editor.revealRange(new vscode.Range(target, target));
+            },
+        ),
+    );
+    void semanticManager.start().catch((error) => {
             const detail = error instanceof Error ? error.message : String(error);
             vscode.window.showErrorMessage(
                 `No se pudo preparar el servidor semántico Grails: ${detail}`,
             );
         });
+    context.subscriptions.push(
+        vscode.commands.registerCommand("grails.semantic.restart", () =>
+            semanticManager?.scheduleRestart(0),
+        ),
+        vscode.workspace.onDidChangeConfiguration((event) => {
+            if (event.affectsConfiguration("grails.semantic"))
+                semanticManager?.scheduleRestart();
+        }),
+        vscode.workspace.onDidChangeWorkspaceFolders(() =>
+            semanticManager?.scheduleRestart(),
+        ),
+        vscode.workspace.onDidGrantWorkspaceTrust(() =>
+            semanticManager?.scheduleRestart(0),
+        ),
+    );
 
     // Project tree
     treeProvider = new GrailsProjectProvider();
@@ -1107,10 +1361,8 @@ export function activate(context: vscode.ExtensionContext) {
     }
 }
 
-export function deactivate(): Thenable<void> | undefined {
-    const stops: Thenable<void>[] = semanticClients.map((semanticClient) =>
-        semanticClient.stop(),
-    );
-    if (client) stops.push(client.stop());
-    return stops.length > 0 ? Promise.all(stops).then(() => undefined) : undefined;
+export async function deactivate(): Promise<void> {
+    await semanticManager?.dispose();
+    semanticManager = undefined;
+    if (client) await client.stop();
 }

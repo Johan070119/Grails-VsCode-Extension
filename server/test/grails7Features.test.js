@@ -9,7 +9,7 @@ const { getCompletions } = require("../dist/completion.js");
 const { getDefinition } = require("../dist/definition.js");
 const { buildGrailsProject } = require("../dist/grailsProject.js");
 const { getGspDiagnostics } = require("../dist/gspFeatures.js");
-const { getHover } = require("../dist/languageFeatures.js");
+const { getHover, getDocumentSymbols } = require("../dist/languageFeatures.js");
 const { pathToUri } = require("../dist/uriUtils.js");
 
 function write(root, relative, contents) {
@@ -89,6 +89,26 @@ test("completes dynamic finders and instance association helpers", (t) => {
     result = complete(domain, "groovy", "def book = new Book()\nbook.", project);
     assert.equal(result.items.some((item) => item.label === "addToAuthors"), true);
     assert.equal(result.items.some((item) => item.label === "getDirtyPropertyNames"), true);
+
+    result = complete(domain, "groovy", "package example\nBook.", project);
+    assert.equal(result.items.some((item) => item.label === "getAll"), true, "same-package domains do not require an import");
+
+    result = complete(domain, "groovy", "package example\ndef selectedBook = Book.get(1)\nselectedBook.", project);
+    assert.equal(result.items.some((item) => item.label === "title"), true, "domain variables are inferred from GORM assignments");
+
+    result = complete(domain, "groovy", "package example\nBook.where {\n  ", project);
+    const whereTitle = result.items.find((item) => item.label === "title");
+    assert.equal(whereTitle.insertText, "title", "where properties use expression syntax rather than quoted criteria names");
+});
+
+test("dynamic finder operator navigation resolves the underlying property", (t) => {
+    const { domain, project } = fixture(t);
+    const text = "package example\nBook.findByTitleIlike('%grails%')";
+    const document = TextDocument.create(pathToUri(domain), "groovy", 1, text);
+    const definition = getDefinition(document, { textDocument: { uri: document.uri }, position: { line: 1, character: 12 } }, project);
+    assert.ok(definition);
+    assert.equal(definition.uri, pathToUri(domain));
+    assert.equal(definition.range.start.line, 2);
 });
 
 test("completes GSP tags, attributes and controller actions", (t) => {
@@ -124,6 +144,16 @@ test("navigates across GSP templates, TagLibs, controllers and assets", (t) => {
     const actionDefinition = getDefinition(actionDocument, { textDocument: { uri: actionDocument.uri }, position: { line: 0, character: 42 } }, project);
     assert.equal(actionDefinition.uri, pathToUri(controller));
     assert.equal(actionDefinition.range.start.line, 3);
+
+    const plainDocument = TextDocument.create(pathToUri(view), "gsp", 1, "<p>Plain HTML</p>");
+    const plainDefinition = getDefinition(plainDocument, { textDocument: { uri: plainDocument.uri }, position: { line: 0, character: 4 } }, project);
+    assert.equal(plainDefinition, null, "plain GSP content must not incorrectly navigate to its conventional controller");
+
+    const expressionDocument = TextDocument.create(pathToUri(view), "gsp", 1, "<p>${book.title}</p>");
+    const propertyDefinition = getDefinition(expressionDocument, { textDocument: { uri: expressionDocument.uri }, position: { line: 0, character: 12 } }, project);
+    assert.ok(propertyDefinition);
+    assert.equal(propertyDefinition.uri, pathToUri(path.join(project.root, "grails-app/domain/example/Book.groovy")));
+    assert.equal(propertyDefinition.range.start.line, 2);
 });
 
 test("provides GSP hover and diagnostics for invalid references", (t) => {
@@ -134,4 +164,13 @@ test("provides GSP hover and diagnostics for invalid references", (t) => {
     const diagnostics = getGspDiagnostics(document, project);
     assert.equal(diagnostics.some((item) => /does not exist/.test(item.message)), true);
     assert.equal(diagnostics.some((item) => /requires the 'template'/.test(item.message)), true);
+    const symbols = getDocumentSymbols(document, project);
+    assert.equal(symbols.some((symbol) => symbol.name === "g:link"), true);
+    assert.equal(symbols.some((symbol) => symbol.name === "g:render"), true);
+
+    const broken = TextDocument.create(pathToUri(view), "gsp", 1, '<g:link controller="book" action="missing">x</g:link>\n<asset:javascript src="missing.js"/>\n${book.title');
+    const brokenDiagnostics = getGspDiagnostics(broken, project);
+    assert.equal(brokenDiagnostics.some((item) => /Action 'missing'/.test(item.message)), true);
+    assert.equal(brokenDiagnostics.some((item) => /Asset 'missing.js'/.test(item.message)), true);
+    assert.equal(brokenDiagnostics.some((item) => /Unclosed GSP expression/.test(item.message)), true);
 });

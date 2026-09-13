@@ -1,6 +1,6 @@
 {
     "name": "grails-language-server",
-    "version": "0.5.0",
+    "version": "0.7.0",
     "description": "LSP server for Grails/Groovy projects",
     "main": "dist/server.js",
     "scripts": {

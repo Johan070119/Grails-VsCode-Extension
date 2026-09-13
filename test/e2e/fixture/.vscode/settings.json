@@ -1,0 +1,6 @@
+{
+    "grails.semantic.enabled": true,
+    "grails.semantic.gradle.autoClasspath": false,
+    "grails.semantic.startupTimeout": 30000,
+    "grails.semantic.java.maxHeapMb": 512
+}

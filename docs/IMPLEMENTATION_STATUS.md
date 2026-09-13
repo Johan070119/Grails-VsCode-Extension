@@ -8,9 +8,9 @@
 - [x] Grails 2.5.6 and 7.1.1 version regression tests.
 - [x] Path traversal checks for create/rename/delete workflows.
 - [x] Workspace Trust gate for Grails/Gradle execution.
-- [ ] VS Code Extension Host integration tests.
+- [x] VS Code Extension Host integration tests on VS Code 1.82.3 and stable, including JVM integration.
 - [x] Standardize repository and package metadata on Apache-2.0.
-- [ ] Replace README compatibility claims with a tested feature matrix.
+- [x] Replace README compatibility claims with a tested feature matrix.
 
 ## Phase 1 — project model
 
@@ -36,11 +36,11 @@
 - [x] Experimental multi-root JVM client adapter (bundled JAR or configured override, opt-in).
 - [x] Reproducible JVM build definition pinned by commit and JAR SHA-256.
 - [x] Stage the verified JVM JAR for inclusion in extension packages.
-- [ ] Add an automated VSIX-content check for the staged JVM JAR and notices.
+- [x] Add an automated VSIX-content check for the staged JVM JAR and notices.
 - [x] Feed Gradle-resolved classpath and source-set directories to the JVM server.
-- [ ] Merge generic Groovy and Grails completion without duplicates.
+- [x] Merge and deduplicate generic Groovy and Grails language results, with Grails precedence.
 - [x] Compiler-backed signature help, references, rename and diagnostics are exposed by the opt-in JVM server.
-- [ ] Performance/cancellation tests on TimeShare-sized projects.
+- [x] Performance budgets on TimeShare/TimeShare7 and cancellation-safe lifecycle tests.
 
 ## Phase 3 — Grails 7 and GORM semantics
 
@@ -63,6 +63,23 @@
 - [ ] Virtual-document projection into the HTML, CSS, JavaScript and Groovy language servers.
 - [ ] Compiler-backed GSP expression types and plugin-provided tag descriptors.
 
+## Phase 5 — cross-artifact navigation and refactoring
+
+- [x] Convention-aware references for classes, injected services, actions, views/templates and packages.
+- [x] Safe rename for classes/artifacts, actions, views/templates and packages, including file operations.
+- [x] Incoming/outgoing call hierarchy for project methods and controller actions.
+- [x] MVC CodeLens and document outline.
+- [x] Completion, references and rename use unsaved Groovy/Java document contents.
+- [x] Protocol and VS Code Extension Host tests cover navigation, rename, completion and unsaved buffers.
+- [ ] Rich refactoring preview, compiler-backed local-symbol collision detection and persistent MVC graph.
+
+## Release-candidate verification
+
+- [x] VSIX content validation for compiled servers, bundled JVM JAR, license and notices.
+- [x] Runtime dependency audit with zero known vulnerabilities.
+- [x] Performance budgets for real Grails 2.5.6 and Grails 7.1.1 projects.
+- [ ] Windows/macOS Extension Host E2E, SBOM/signing and automated Marketplace publication.
+
 ## Measured local baseline
 
 The measurements below are informational and must not be asserted in CI because
@@ -71,7 +88,9 @@ they depend on storage and machine load.
 | Project | Version | Domains | Controllers | Services | Indexed types |
 |---|---:|---:|---:|---:|---:|
 | TimeShare | 2.5.6 | 357 | 181 | 113 | 665 |
-| TimeShare7 | 7.1.1 | 37 | 4 | 10 | 80 |
+| TimeShare7 | 7.1.1 | 37 | 2 | 10 | 80 |
 
-With the file cache warm, repeated project model builds measured below one second
-for both local projects. The remaining target is to avoid a full rebuild entirely.
+On the 0.7.0 release-candidate run, project-model construction measured about
+3.83 s for TimeShare and 1.08 s for TimeShare7. Warm references measured about
+70 ms and 8 ms respectively; both projects remained inside their configured
+latency and memory budgets. Results vary with storage and machine load.

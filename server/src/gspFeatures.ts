@@ -128,9 +128,11 @@ function actionItems(tag: string, filePath: string, project: GrailsProject): Com
     if (!artifact) return [];
     let source = "";
     try { source = fs.readFileSync(artifact.filePath, "utf8"); } catch { return []; }
-    return [...source.matchAll(/^\s*(?:def|[A-Za-z_$][\w.$<>?]*)\s+([A-Za-z_]\w*)\s*\(/gm)].map((match) => ({
-        label: match[1], kind: CompletionItemKind.Method, detail: `${artifact.name} action`, insertText: match[1],
-    }));
+    return [...source.matchAll(/^\s*(?:def|[A-Za-z_$][\w.$<>?]*)\s+([A-Za-z_]\w*)\s*(?:\(|=\s*\{)/gm)]
+        .filter((match) => match[1] !== artifact.name)
+        .map((match) => ({
+            label: match[1], kind: CompletionItemKind.Method, detail: `${artifact.name} action`, insertText: match[1],
+        }));
 }
 
 function walkFiles(root: string, extensions: string[], limit = 500): string[] {
@@ -221,6 +223,23 @@ function existing(candidates: string[]): string | null {
     return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
 }
 
+function assetCandidates(project: GrailsProject, tagText: string, assetValue: string, dir = ""): string[] {
+    const relative = path.join(dir, assetValue.replace(/^\//, ""));
+    const typedSubdir = /(?:asset:javascript|g:javascript)/.test(tagText)
+        ? "javascripts"
+        : /asset:stylesheet/.test(tagText)
+          ? "stylesheets"
+          : /(?:asset:image|g:img)/.test(tagText)
+            ? "images"
+            : "";
+    return [
+        path.join(project.root, "grails-app", "assets", relative),
+        ...(typedSubdir ? [path.join(project.root, "grails-app", "assets", typedSubdir, relative)] : []),
+        path.join(project.root, "web-app", relative),
+        path.join(project.root, "src", "main", "resources", "public", relative),
+    ];
+}
+
 export function getGspDefinition(document: TextDocument, params: TextDocumentPositionParams, project: GrailsProject): Location | null {
     const filePath = uriToPath(document.uri);
     if (!filePath.endsWith(".gsp")) return null;
@@ -253,12 +272,7 @@ export function getGspDefinition(document: TextDocument, params: TextDocumentPos
     const assetValue = /\b(?:src|href|file)\s*=\s*['"]([^'"$]+)['"]/.exec(line)?.[1];
     if (assetValue) {
         const dir = /\bdir\s*=\s*['"]([^'"]+)['"]/.exec(line)?.[1];
-        const relative = path.join(dir ?? "", assetValue.replace(/^\//, ""));
-        const candidate = existing([
-            path.join(project.root, "grails-app", "assets", relative),
-            path.join(project.root, "web-app", relative),
-            path.join(project.root, "src", "main", "resources", "public", relative),
-        ]);
+        const candidate = existing(assetCandidates(project, line, assetValue, dir ?? ""));
         if (candidate) return location(candidate);
     }
 
@@ -268,7 +282,7 @@ export function getGspDefinition(document: TextDocument, params: TextDocumentPos
         ? controller.charAt(0).toUpperCase() + controller.slice(1) + "Controller"
         : controllerForView(filePath, project);
     const artifact = controllerName ? project.controllers.get(controllerName) : null;
-    if (artifact) {
+    if (artifact && (controller || action)) {
         const controllerAttribute = /\bcontroller\s*=\s*['"]([\w-]+)['"]/.exec(line);
         const actionAttribute = /\baction\s*=\s*['"]([\w-]+)['"]/.exec(line);
         const onController = controllerAttribute?.index != null && cursor >= controllerAttribute.index && cursor <= controllerAttribute.index + controllerAttribute[0].length;
@@ -277,7 +291,7 @@ export function getGspDefinition(document: TextDocument, params: TextDocumentPos
         let source = "";
         try { source = fs.readFileSync(artifact.filePath, "utf8"); } catch { return location(artifact.filePath); }
         const lines = source.split("\n");
-        const actionLine = lines.findIndex((candidate) => new RegExp(`\\b${action}\\s*\\(`).test(candidate));
+        const actionLine = lines.findIndex((candidate) => new RegExp(`\\b${action}\\s*(?:\\(|=\\s*\\{)`).test(candidate));
         if (onAction || action) return location(artifact.filePath, Math.max(0, actionLine));
     }
 
@@ -321,9 +335,17 @@ export function getGspDiagnostics(document: TextDocument, project: GrailsProject
     const custom = customTags(project);
     const viewsRoot = path.join(project.root, "grails-app", "views");
     let expressionDepth = 0;
+    let inExpression = false;
 
     document.getText().split("\n").forEach((line, lineNumber) => {
-        expressionDepth += (line.match(/\$\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
+        for (let index = 0; index < line.length; index++) {
+            if (!inExpression && line[index] === "$" && line[index + 1] === "{") {
+                inExpression = true;
+                expressionDepth = 1;
+                index++;
+            } else if (inExpression && line[index] === "{") expressionDepth++;
+            else if (inExpression && line[index] === "}" && --expressionDepth === 0) inExpression = false;
+        }
         for (const match of line.matchAll(/<([\w-]+:[\w-]+)\b([^>]*)>/g)) {
             const [whole, name, attributes] = match;
             const start = match.index ?? 0;
@@ -342,6 +364,25 @@ export function getGspDiagnostics(document: TextDocument, project: GrailsProject
             if (controller) {
                 const className = `${controller.charAt(0).toUpperCase()}${controller.slice(1)}Controller`;
                 if (!project.controllers.has(className)) results.push(diagnostic(lineNumber, start, start + whole.length, `Controller '${controller}' does not exist.`));
+            }
+
+            const action = /\baction\s*=\s*['"]([\w-]+)['"]/.exec(attributes)?.[1];
+            const controllerName = controller
+                ? `${controller.charAt(0).toUpperCase()}${controller.slice(1)}Controller`
+                : controllerForView(uriToPath(document.uri), project);
+            const controllerArtifact = controllerName ? project.controllers.get(controllerName) : null;
+            if (action && controllerArtifact) {
+                const source = (() => { try { return fs.readFileSync(controllerArtifact.filePath, "utf8"); } catch { return ""; } })();
+                if (!new RegExp(`\\b${action}\\s*(?:\\(|=\\s*\\{)`).test(source)) {
+                    results.push(diagnostic(lineNumber, start, start + whole.length, `Action '${action}' does not exist in ${controllerArtifact.name}.`));
+                }
+            }
+
+            const asset = /\b(?:src|href|file)\s*=\s*['"]([^'"$]+)['"]/.exec(attributes)?.[1];
+            if (asset && /^(?:asset:|g:(?:resource|javascript|img))/.test(name)) {
+                const dir = /\bdir\s*=\s*['"]([^'"]+)['"]/.exec(attributes)?.[1] ?? "";
+                const found = existing(assetCandidates(project, name, asset, dir));
+                if (!found) results.push(diagnostic(lineNumber, start, start + whole.length, `Asset '${asset}' does not exist.`));
             }
         }
     });
@@ -363,7 +404,7 @@ export function getGspDiagnostics(document: TextDocument, project: GrailsProject
         }
     });
 
-    if (expressionDepth > 0) {
+    if (inExpression && expressionDepth > 0) {
         const lastLine = Math.max(0, document.lineCount - 1);
         results.push(diagnostic(lastLine, 0, 1, "Unclosed GSP expression '${...}'."));
     }

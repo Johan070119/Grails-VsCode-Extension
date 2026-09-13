@@ -29,12 +29,13 @@
 
 ## 1. Visión general
 
-Esta extensión añade soporte de lenguaje Grails/Groovy a VS Code. Está construida sobre el protocolo LSP (Language Server Protocol) y tiene dos partes independientes:
+Esta extensión añade soporte de lenguaje Grails/Groovy a VS Code. Desde 0.7.0 combina tres capas:
 
-- **Cliente** (`src/extension.ts`): código que corre dentro de VS Code. Gestiona la UI: árbol de proyecto, menú contextual, CLI, CodeLens, status bar.
-- **Servidor LSP** (`server/src/`): proceso Node.js separado que analiza el código Groovy y responde peticiones de autocompletado y navegación.
+- **Cliente** (`src/extension.ts`): UI, comandos, lifecycle JVM y fusión/deduplicación de resultados.
+- **Servidor Grails** (`server/src/`): proceso Node.js con GORM, convenciones MVC, GSP y navegación/refactor transversal.
+- **Servidor semántico** (`semantic-server/`): proceso JVM opt-in con semántica compiler-backed de Groovy/Java.
 
-La separación es importante: el cliente puede usar APIs de VS Code (`vscode.*`), el servidor **no puede** — solo usa `vscode-languageserver`.
+La separación es importante: el cliente puede usar APIs de VS Code (`vscode.*`); los servidores se comunican mediante LSP. Para el diseño vigente consulta primero [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) y [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md); las secciones detalladas posteriores documentan el parser Grails y algunos patrones históricos.
 
 ---
 
@@ -599,6 +600,19 @@ cd server && rm -rf dist/ && npx tsc -p tsconfig.json
 Ctrl+Shift+P → Developer: Reload Window
 ```
 
+### Verificación antes de un release
+
+```bash
+npm test                 # compilación y pruebas unitarias/LSP
+npm run test:e2e         # VS Code Extension Host
+npm run test:performance # presupuestos TimeShare/TimeShare7, si están disponibles
+npm run package:release  # genera y valida artifacts/*.vsix
+```
+
+El CI repite las pruebas unitarias en Linux, Windows y macOS; ejecuta Extension
+Host en la versión mínima y estable de VS Code; audita dependencias de runtime y
+valida el contenido del VSIX.
+
 ### Ver logs del servidor
 
 ```
@@ -623,4 +637,4 @@ Los backticks en template literals dentro del servidor LSP pueden causar errores
 
 ---
 
-*Documentación revisada el 11 de septiembre de 2026. Versión del proyecto: 0.5.0*
+*Documentación revisada el 13 de septiembre de 2026. Versión del proyecto: 0.7.0*

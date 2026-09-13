@@ -1,5 +1,36 @@
 # Change Log
 
+## [0.7.0] - 2026-09-13
+
+### Added
+
+- VS Code Extension Host integration tests for activation, completion, definition, references, rename, CodeLens and unsaved buffers, exercised with the semantic JVM server enabled.
+- Grails-aware Find References, Rename Symbol, incoming/outgoing Call Hierarchy and MVC CodeLens support.
+- Immediate project-model overlays for unsaved Groovy and Java documents.
+- Restartable semantic-server lifecycle with cancellation, startup timeout, per-JVM heap limit, workspace-folder/trust/configuration restarts and a manual restart command.
+- Performance budgets for project modeling, cold/warm references, GORM completion and memory, with local TimeShare 2.5.6 and TimeShare7 7.1.1 runners.
+- Reproducible release packaging and VSIX content verification for compiled servers, the pinned JVM JAR, license notices and excluded development files.
+- CI jobs for the minimum supported and stable VS Code Extension Hosts and a verified release-candidate artifact.
+
+### Changed
+
+- Grails TypeScript and JVM semantic results are now fused and deduplicated for completion, definition, references, hover and workspace symbols.
+- Grails-aware rename and document symbols take priority, with compiler-backed JVM behavior as a fallback.
+- The minimum supported VS Code version is now 1.82.0, matching `vscode-languageclient` 9 requirements.
+- The language client waits for the primary server to start and shuts down semantic processes deterministically.
+
+### Fixed
+
+- Repeated configuration/workspace restarts can no longer leave stale semantic JVM processes active.
+- Completion no longer shows duplicate items when both language servers return the same Grails or Groovy symbol.
+- Navigation, references and rename no longer ignore unsaved source changes.
+
+### Security
+
+- Semantic execution remains disabled in untrusted workspaces.
+- Java/Gradle processes use argument arrays, bounded timeouts and bounded heap configuration; no project path is interpolated into a shell command.
+- Runtime dependency audit passes with no known vulnerabilities at packaging time.
+
 ## [0.6.0] - 2026-09-12
 
 ### Added

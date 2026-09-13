@@ -4,8 +4,10 @@ import { Connection } from "vscode-languageserver/node";
 import {
     GrailsProject,
     buildGrailsProject,
+    clearOpenFileContent,
     findGrailsRoot,
     isGrailsProject,
+    setOpenFileContent,
     updateGrailsProjectFile,
 } from "./grailsProject";
 
@@ -76,6 +78,20 @@ export class GrailsIndexer {
             this.rebuildTimers.delete(project.root);
         }, 300);
         this.rebuildTimers.set(project.root, timer);
+    }
+
+    onOpenDocumentChanged(filePath: string, content: string): void {
+        setOpenFileContent(filePath, content);
+        const project = this.getProject(filePath);
+        if (project && /\.(?:groovy|java)$/.test(filePath))
+            updateGrailsProjectFile(project, filePath);
+    }
+
+    onOpenDocumentClosed(filePath: string): void {
+        clearOpenFileContent(filePath);
+        const project = this.getProject(filePath);
+        if (project && /\.(?:groovy|java)$/.test(filePath))
+            updateGrailsProjectFile(project, filePath);
     }
 
     getProject(documentPath?: string): GrailsProject | null {

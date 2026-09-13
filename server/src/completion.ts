@@ -131,6 +131,39 @@ function parseImportedNames(
     return imported;
 }
 
+function documentPackage(docText: string): string {
+    return /^\s*package\s+([\w.]+)/m.exec(docText)?.[1] ?? "";
+}
+
+function isDomainAccessible(
+    domain: DomainClass,
+    doc: TextDocument,
+    hasQualifiedPrefix: boolean,
+    importedNames: Set<string>,
+): boolean {
+    if (hasQualifiedPrefix || importedNames.has(domain.name)) return true;
+    if (documentPackage(doc.getText()) === domain.packageName) return true;
+    return path.resolve(uriToPath(doc.uri)) === path.resolve(domain.filePath);
+}
+
+function resolveDomainNameForVariable(
+    variableName: string,
+    docText: string,
+    project: GrailsProject,
+): string | null {
+    const escaped = variableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const patterns = [
+        new RegExp(`\\b([A-Z]\\w*)\\s+${escaped}\\b`),
+        new RegExp(`\\b(?:def|var)\\s+${escaped}\\s*=\\s*new\\s+([A-Z]\\w*)\\b`),
+        new RegExp(`\\b(?:def|var)\\s+${escaped}\\s*=\\s*([A-Z]\\w*)\\s*\\??\\.(?:get|read|load|find|findBy|findAll|findAllBy|where|list)\\w*`),
+    ];
+    for (const pattern of patterns) {
+        const match = pattern.exec(docText);
+        if (match && project.domains.has(match[1])) return match[1];
+    }
+    return null;
+}
+
 function resolveSourceNameForVariable(
     variableName: string,
     docText: string,
@@ -199,10 +232,12 @@ function detectContext(
     const pkgDomainMatch = /(?:[\w]+\.)*([A-Z]\w+)\.(\w*)$/.exec(lineUpTo);
     if (pkgDomainMatch) {
         const candidate = pkgDomainMatch[1];
+        const candidateStart = pkgDomainMatch.index + pkgDomainMatch[0].lastIndexOf(candidate);
+        const embeddedCamelCase = candidateStart > 0 && /[a-z]/.test(lineUpTo[candidateStart - 1]);
 
         // 1. Domain class check (requires import)
         const domain = project?.domains.get(candidate);
-        if (domain) {
+        if (domain && !embeddedCamelCase) {
             const fullMatch = pkgDomainMatch[0];
             const hasPkgPrefix =
                 fullMatch.indexOf(".") !== fullMatch.lastIndexOf(".");
@@ -210,8 +245,12 @@ function detectContext(
                 doc.getText(),
                 project,
             );
-            const isImported =
-                hasPkgPrefix || importedNamesLocal.has(candidate);
+            const isImported = isDomainAccessible(
+                domain,
+                doc,
+                hasPkgPrefix,
+                importedNamesLocal,
+            );
             if (isImported) {
                 const finderSoFar = pkgDomainMatch[2];
                 if (
@@ -237,7 +276,7 @@ function detectContext(
         }
 
         // 2. Controller class check (SwaggerController. — no import required)
-        if (project?.controllers.has(candidate)) {
+        if (!embeddedCamelCase && project?.controllers.has(candidate)) {
             return { kind: "controller_static", controllerName: candidate };
         }
 
@@ -245,7 +284,7 @@ function detectContext(
         // (not a camelCase fragment like "TokenService" from "fusionTokenService.")
         // Heuristic: the character before the candidate in lineUpTo must be a space,
         // = sign, ( or start of line — NOT a lowercase letter (which would be camelCase split)
-        if (project?.services.has(candidate)) {
+        if (!embeddedCamelCase && project?.services.has(candidate)) {
             const beforeCandidate = lineUpTo.slice(
                 0,
                 pkgDomainMatch.index +
@@ -261,15 +300,17 @@ function detectContext(
             }
         }
 
-        if (project?.sourceClassesBySimpleName.has(candidate)) {
+        if (!embeddedCamelCase && project?.sourceClassesBySimpleName.has(candidate)) {
             return { kind: "source_members", sourceName: candidate };
         }
     }
     // ── GORM static: Book.| (simple, no package prefix) ─────────────────────
     const staticMatch = /([A-Z]\w+)\.(\w*)$/.exec(lineUpTo);
-    if (staticMatch && project?.domains.has(staticMatch[1])) {
+    const staticEmbeddedCamelCase = staticMatch != null && staticMatch.index > 0 && /[a-z]/.test(lineUpTo[staticMatch.index - 1]);
+    if (staticMatch && !staticEmbeddedCamelCase && project?.domains.has(staticMatch[1])) {
         const importedNamesStatic = parseImportedNames(doc.getText(), project);
-        if (importedNamesStatic.has(staticMatch[1])) {
+        const domain = project.domains.get(staticMatch[1])!;
+        if (isDomainAccessible(domain, doc, false, importedNamesStatic)) {
             const finderSoFar = staticMatch[2];
             if (
                 /^(?:find(?:All)?By|listBy|countBy|existsBy)\w+(And|Or)\w*$/.test(
@@ -302,18 +343,19 @@ function detectContext(
         if (typed.length >= 1) {
             const lowerTyped = typed.toLowerCase();
             const importedNames = parseImportedNames(doc.getText(), project);
+            const accessibleNames = new Set(importedNames);
+            for (const domain of project.domains.values()) {
+                if (isDomainAccessible(domain, doc, false, importedNames)) accessibleNames.add(domain.name);
+            }
 
-            // Domains require import
             const hasDomainMatch = [...project.domains.keys()].some(
-                (d) =>
-                    d.toLowerCase().startsWith(lowerTyped) &&
-                    importedNames.has(d),
+                (d) => d.toLowerCase().startsWith(lowerTyped) && accessibleNames.has(d),
             );
             if (hasDomainMatch) {
                 return {
                     kind: "domain_name",
                     instanceName: typed,
-                    importedNames,
+                    importedNames: accessibleNames,
                 };
             }
 
@@ -346,7 +388,7 @@ function detectContext(
         const varName = instanceMatch[1];
         const domainName = [...project.domains.keys()].find(
             (d) => d.toLowerCase() === varName.toLowerCase(),
-        );
+        ) ?? resolveDomainNameForVariable(varName, doc.getText(), project);
         if (domainName) {
             return { kind: "gorm_instance", domainName, instanceName: varName };
         }
@@ -532,7 +574,7 @@ function actionNameCompletions(
     if (!src) return [];
 
     // Find all "def actionName" declarations
-    const actionRe = /^\s*def\s+(\w+)\s*\(/gm;
+    const actionRe = /^\s*def\s+(\w+)\s*(?:\(|=\s*\{)/gm;
     const items: CompletionItem[] = [];
     let m: RegExpExecArray | null;
     while ((m = actionRe.exec(src)) !== null) {
@@ -1143,7 +1185,7 @@ function controllerMethodCompletions(
     }
 
     const methodRe =
-        /^\s*(?:(?:private|protected|public)\s+)?(?:static\s+)?(?:def|\w+)\s+(\w+)\s*\(/gm;
+        /^\s*(?:(?:private|protected|public)\s+)?(?:static\s+)?(?:def|\w+)\s+(\w+)\s*(?:\(|=\s*\{)/gm;
     const items: CompletionItem[] = [];
     let m: RegExpExecArray | null;
     const seen = new Set<string>();
@@ -1163,7 +1205,7 @@ function controllerMethodCompletions(
 
     while ((m = methodRe.exec(src)) !== null) {
         const methodName = m[1];
-        if (seen.has(methodName) || skip.has(methodName)) continue;
+        if (seen.has(methodName) || skip.has(methodName) || methodName === artifact.name) continue;
         seen.add(methodName);
         items.push({
             label: methodName,
@@ -1209,7 +1251,7 @@ function serviceMethodCompletions(
     }
 
     const methodRe =
-        /^\s*(?:(?:private|protected|public)\s+)?(?:static\s+)?(?:def|\w+)\s+(\w+)\s*\(/gm;
+        /^\s*(?:(?:private|protected|public)\s+)?(?:static\s+)?(?:def|\w+)\s+(\w+)\s*(?:\(|=\s*\{)/gm;
     const items: CompletionItem[] = [];
     let m: RegExpExecArray | null;
     const seen = new Set<string>();
@@ -1667,6 +1709,11 @@ export function getCompletions(
             const importedNames = project
                 ? parseImportedNames(doc.getText(), project)
                 : new Set<string>();
+            if (project) {
+                for (const domain of project.domains.values()) {
+                    if (isDomainAccessible(domain, doc, false, importedNames)) importedNames.add(domain.name);
+                }
+            }
             const domainNames: CompletionItem[] =
                 project && importedNames.size > 0
                     ? [...project.domains.values()]

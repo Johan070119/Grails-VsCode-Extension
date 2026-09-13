@@ -2,7 +2,7 @@
     "name": "grails-extension-vscode",
     "displayName": "Grails Support For VS Code",
     "description": "Grails language support for VS Code with completion, navigation, project model, GSP support and CLI integration",
-    "version": "0.6.0",
+    "version": "0.7.0",
     "publisher": "JohanMixtegaCisneros",
     "license": "Apache-2.0",
     "homepage": "https://github.com/Johan070119/Grails-VsCode-Extension#readme",
@@ -14,7 +14,7 @@
         "url": "https://github.com/Johan070119/Grails-VsCode-Extension"
     },
     "engines": {
-        "vscode": "^1.80.0"
+        "vscode": "^1.82.0"
     },
     "categories": [
         "Programming Languages",
@@ -128,9 +128,26 @@
                     "scope": "machine-overridable",
                     "description": "JDK home used to launch the experimental semantic server"
                 },
+                "grails.semantic.java.maxHeapMb": {
+                    "type": "number",
+                    "default": 1024,
+                    "minimum": 256,
+                    "maximum": 8192,
+                    "scope": "machine-overridable",
+                    "description": "Maximum heap in MB assigned to each semantic JVM server"
+                },
+                "grails.semantic.startupTimeout": {
+                    "type": "number",
+                    "default": 30000,
+                    "minimum": 5000,
+                    "maximum": 120000,
+                    "description": "Maximum time in milliseconds for the semantic server to start"
+                },
                 "grails.semantic.classpath": {
                     "type": "array",
-                    "items": { "type": "string" },
+                    "items": {
+                        "type": "string"
+                    },
                     "default": [],
                     "scope": "resource",
                     "description": "Additional JARs or directories for Groovy semantic analysis; relative paths resolve from each project root"
@@ -233,6 +250,11 @@
                 "category": "Grails"
             },
             {
+                "command": "grails.semantic.restart",
+                "title": "Reiniciar Servidor Semántico",
+                "category": "Grails"
+            },
+            {
                 "command": "grails.ctx.createFolder",
                 "title": "Nueva Carpeta",
                 "category": "Grails"
@@ -331,6 +353,10 @@
                     "when": "workspaceContains:grails-app"
                 },
                 {
+                    "command": "grails.semantic.restart",
+                    "when": "workspaceContains:grails-app"
+                },
+                {
                     "command": "grails.ctx.createFolder",
                     "when": "false"
                 },
@@ -425,6 +451,11 @@
         "build:semantic": "node scripts/build-semantic-server.mjs",
         "vscode:prepublish": "npm run build",
         "test": "npm run compile && node --test test/*.test.js server/test/*.test.js",
+        "test:e2e": "npm run compile && node test/e2e/run.mjs",
+        "test:performance": "npm run compile:server && node scripts/performance-budget.mjs",
+        "test:release": "npm run test && npm run test:e2e && npm run test:performance",
+        "package:release": "npm run compile && node scripts/package-release.mjs",
+        "verify:vsix": "node scripts/verify-vsix.mjs",
         "check": "npm run test"
     },
     "dependencies": {
@@ -432,7 +463,9 @@
     },
     "devDependencies": {
         "@types/node": "^25.4.0",
-        "@types/vscode": "^1.80.0",
+        "@types/vscode": "^1.82.0",
+        "@vscode/test-electron": "^3.1.0",
+        "@vscode/vsce": "^3.9.2",
         "typescript": "^5.9.3"
     },
     "icon": "images/icon.png"

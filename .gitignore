@@ -9,6 +9,8 @@ node_modules/
 .vscode/
 .vscode-test/
 .vscode-test.*
+!test/e2e/fixture/.vscode/
+!test/e2e/fixture/.vscode/settings.json
 
 # Archivos de compilación
 *.vsix

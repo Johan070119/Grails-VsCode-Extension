@@ -227,22 +227,34 @@ interface CachedFile {
 }
 
 const fileContentCache = new Map<string, CachedFile>();
+const openFileContents = new Map<string, string>();
 
-function readFileSafe(filePath: string): string {
+export function setOpenFileContent(filePath: string, content: string): void {
+    openFileContents.set(path.resolve(filePath), content);
+}
+
+export function clearOpenFileContent(filePath: string): void {
+    openFileContents.delete(path.resolve(filePath));
+}
+
+export function readFileSafe(filePath: string): string {
+    const normalized = path.resolve(filePath);
+    const openContent = openFileContents.get(normalized);
+    if (openContent !== undefined) return openContent;
     try {
-        const stat = fs.statSync(filePath);
-        const cached = fileContentCache.get(filePath);
+        const stat = fs.statSync(normalized);
+        const cached = fileContentCache.get(normalized);
         if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size)
             return cached.content;
-        const content = fs.readFileSync(filePath, "utf8");
-        fileContentCache.set(filePath, {
+        const content = fs.readFileSync(normalized, "utf8");
+        fileContentCache.set(normalized, {
             mtimeMs: stat.mtimeMs,
             size: stat.size,
             content,
         });
         return content;
     } catch {
-        fileContentCache.delete(filePath);
+        fileContentCache.delete(normalized);
         return "";
     }
 }
@@ -424,7 +436,7 @@ function parseSourceClass(filePath: string): SourceClass | null {
     const declarationLine = beforeDeclaration.split("\n").length - 1;
     const members: SourceMember[] = [];
     const lines = src.split("\n");
-    const methodPattern = /^\s*(?:(?:public|protected|private|static|final|abstract|synchronized|native)\s+)*(?:def|[A-Za-z_$][\w.$<>?,\[\]]*)\s+([A-Za-z_]\w*)\s*\(/;
+    const methodPattern = /^\s*(?:(?:public|protected|private|static|final|abstract|synchronized|native)\s+)*(?:def|[A-Za-z_$][\w.$<>?,\[\]]*)\s+([A-Za-z_]\w*)\s*(?:\(|=\s*\{)/;
     const propertyPattern = /^\s*(?:(?:public|protected|private|static|final|transient|volatile)\s+)*([A-Za-z_$][\w.$<>?,\[\]]*)\s+([A-Za-z_]\w*)\s*(?:=|$)/;
     const ignoredMembers = new Set([
         "if",
@@ -703,6 +715,8 @@ function parseArtifact(
                 ? "TagLib"
                 : "";
 
+    if (suffix && !name.endsWith(suffix)) return null;
+
     const simpleName = name.endsWith(suffix)
         ? name.slice(0, -suffix.length).toLowerCase()
         : name.toLowerCase();
@@ -837,7 +851,7 @@ export function updateGrailsProjectFile(
         else project.sourceClassesBySimpleName.delete(sourceClass.name);
     }
 
-    if (!fs.existsSync(normalized) || !/\.(groovy|java)$/.test(normalized))
+    if (!/\.(groovy|java)$/.test(normalized) || !readFileSafe(normalized))
         return;
 
     const sourceClass = parseSourceClass(normalized);

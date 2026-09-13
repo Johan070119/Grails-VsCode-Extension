@@ -44,6 +44,7 @@ export async function discoverGradleProjectModel(
     initScript: string,
     timeoutMs = 120_000,
     javaHome?: string,
+    signal?: AbortSignal,
 ): Promise<GradleProjectModel | null> {
     const windows = process.platform === "win32";
     const wrapper = path.join(projectRoot, windows ? "gradlew.bat" : "gradlew");
@@ -68,6 +69,7 @@ export async function discoverGradleProjectModel(
         timeout: timeoutMs,
         maxBuffer: 20 * 1024 * 1024,
         windowsHide: true,
+        signal,
     });
     return parseGradleProjectModel(stdout);
 }

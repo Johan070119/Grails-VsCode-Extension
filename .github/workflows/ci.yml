@@ -26,3 +26,50 @@ jobs:
       - run: npm ci
         working-directory: server
       - run: npm test
+
+  extension-host:
+    name: Extension Host (${{ matrix.vscode }})
+    strategy:
+      matrix:
+        vscode: ["1.82.3", "stable"]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: npm ci
+      - run: npm ci
+        working-directory: server
+      - run: xvfb-run -a env VSCODE_TEST_VERSION="${{ matrix.vscode }}" GRAILS_SEMANTIC_JAVA_HOME="$JAVA_HOME" npm run test:e2e
+
+  release-candidate:
+    needs: [test, extension-host]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+      - run: npm ci
+      - run: npm ci
+        working-directory: server
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run package:release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grails-vscode-vsix
+          path: artifacts/*.vsix

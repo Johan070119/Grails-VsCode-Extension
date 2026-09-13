@@ -15,16 +15,12 @@ Grails 2.5.6 como carril de regresión. La extensión de Zed queda fuera de alca
 4. Cada capacidad nueva debe probarse primero en Grails 7.1.1 y luego contra la
    regresión de Grails 2.5.6 cuando corresponda.
 
-## Fase 0 — base verificable y seguridad (casi terminada)
+## Fase 0 — base verificable y seguridad (terminada)
 
 Terminado: compilación separada cliente/servidor, pruebas Node, CI multiplataforma,
-regresiones 2.5.6/7.1.1, Workspace Trust, rutas seguras y licencia Apache-2.0.
-
-Pendiente:
-
-- pruebas reales con VS Code Extension Host;
-- matriz de compatibilidad por función y versión;
-- política de telemetría: por defecto ninguna, salvo decisión explícita futura.
+regresiones 2.5.6/7.1.1, Workspace Trust, rutas seguras, licencia Apache-2.0,
+pruebas reales con VS Code Extension Host mínimo/estable y matriz pública de
+compatibilidad por función. La política vigente es no recopilar telemetría.
 
 ## Fase 1 — modelo de proyecto Grails (núcleo terminado)
 
@@ -42,18 +38,21 @@ Pendiente:
 - invalidación cuando cambien build scripts, catálogos o plugins;
 - evaluar Gradle Tooling API frente al bridge actual con métricas reales.
 
-## Fase 2 — núcleo semántico Groovy/Java (base integrada)
+## Fase 2 — núcleo semántico Groovy/Java (integración E2E terminada)
 
 Terminado: spike JVM, adaptador multi-root opt-in, índice puente de tipos/miembros,
 completion, definition, hover y símbolos básicos. El servidor JVM expone además
 signature help, references, rename y diagnósticos compiler-backed al activarlo. El
-build está anclado por commit y SHA-256.
+build está anclado por commit y SHA-256. La extensión fusiona y deduplica respuestas
+TypeScript/JVM; conserva prioridad para las convenciones Grails y usa la JVM como
+complemento/fallback. El lifecycle es serial, cancelable y multi-root, con timeout,
+límite de heap, reinicio por configuración/workspace/trust y apagado determinista.
+El VSIX verifica automáticamente el JAR, los avisos y el código compilado, y existen
+presupuestos de rendimiento sobre TimeShare y TimeShare7.
 
-Siguiente entrega:
-
-- comprobar automáticamente que el VSIX contiene el JAR verificado y sus licencias;
-- fusionar y deduplicar respuestas TypeScript/JVM;
-- cancelación, límites de memoria, reinicio y pruebas de rendimiento.
+Pendiente de profundidad semántica, no de integración: ampliar el servidor JVM y
+su resolución de classpath a más combinaciones de Groovy, Grails y plugins antes de
+activarlo por defecto.
 
 ## Fase 3 — semántica Grails 7 y GORM (primer corte funcional)
 
@@ -78,12 +77,17 @@ Pendiente: proyección mediante documentos virtuales a los language servers de
 HTML/CSS/JavaScript/Groovy, tipos compiler-backed dentro de expresiones GSP,
 validación estructural completa y descriptores de tags aportados por plugins.
 
-## Fase 5 — navegación y refactorización transversal
+## Fase 5 — navegación y refactorización transversal (primer corte terminado)
 
-- Ctrl/Cmd+Click entre artefactos, Java, Groovy, GSP y recursos;
-- Find References y Call Hierarchy conscientes de convenciones Grails;
-- rename seguro de clases, artefactos, actions, views y paquetes;
-- CodeLens, breadcrumbs, outline e indicadores de relaciones MVC.
+Terminado: Ctrl/Cmd+Click entre artefactos, Java, Groovy, GSP y recursos; Find
+References; Call Hierarchy entrante/saliente; rename seguro de clases/artefactos,
+actions, views/templates y paquetes; cambios de nombre de archivo mediante
+`WorkspaceEdit`; CodeLens y outline MVC. Completion, navegación, referencias y
+rename consideran buffers sin guardar y están cubiertos por pruebas LSP y
+Extension Host.
+
+Pendiente: breadcrumbs propios, preview de refactor más rico, detección de
+colisiones basada en AST para todos los símbolos locales y un grafo MVC persistente.
 
 ## Fase 6 — ejecución, debug, pruebas y generación
 
@@ -108,13 +112,18 @@ validación estructural completa y descriptores de tags aportados por plugins.
 - preparar Grails 8 cuando existan artefactos y documentación estables;
 - diagnósticos opcionales de migración separados de las funciones del editor.
 
-## Fase 9 — calidad y publicación
+## Fase 9 — calidad y publicación (base de release candidate terminada)
 
 - corpus de proyectos fixture y pruebas end-to-end por plataforma;
 - presupuestos de latencia, memoria y tamaño del VSIX;
 - pruebas de actualización, Restricted Mode y fallos de Gradle/JDK;
 - versionado semántico, changelog, SBOM, firmas y publicación automatizada;
 - documentación de contribución y arquitectura para extensiones de terceros.
+
+Disponible desde 0.7.0: fixture E2E, Extension Host mínimo/estable en Linux,
+presupuestos locales con proyectos reales, auditoría de dependencias y generación
+de un VSIX cuyo contenido se valida automáticamente. Siguen pendientes E2E de host
+en Windows/macOS, SBOM/firma, pruebas de actualización y publicación automatizada.
 
 ## Criterio de paridad y superación
 

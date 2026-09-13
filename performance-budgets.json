@@ -1,0 +1,23 @@
+{
+    "default": {
+        "projectModelMs": 5000,
+        "coldReferencesMs": 6500,
+        "referencesMs": 500,
+        "completionMs": 1000,
+        "maxRssMb": 1536
+    },
+    "TimeShare7": {
+        "projectModelMs": 5000,
+        "coldReferencesMs": 1000,
+        "referencesMs": 250,
+        "completionMs": 500,
+        "maxRssMb": 1024
+    },
+    "TimeShare": {
+        "projectModelMs": 5000,
+        "coldReferencesMs": 6500,
+        "referencesMs": 500,
+        "completionMs": 500,
+        "maxRssMb": 1536
+    }
+}
