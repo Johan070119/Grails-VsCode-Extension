@@ -1,0 +1,60 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "Groovy Server Pages",
+    "scopeName": "text.html.gsp",
+    "patterns": [
+        { "include": "#gsp-comment" },
+        { "include": "#gsp-directive" },
+        { "include": "#gsp-expression" },
+        { "include": "#gsp-scriptlet" },
+        { "include": "#grails-tag" },
+        { "include": "text.html.basic" }
+    ],
+    "repository": {
+        "gsp-comment": {
+            "name": "comment.block.gsp",
+            "begin": "<%--",
+            "end": "--%>"
+        },
+        "gsp-directive": {
+            "name": "meta.embedded.block.groovy",
+            "begin": "<%@",
+            "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.gsp" } },
+            "end": "%>",
+            "endCaptures": { "0": { "name": "punctuation.section.embedded.end.gsp" } },
+            "patterns": [{ "include": "source.groovy" }]
+        },
+        "gsp-expression": {
+            "name": "meta.embedded.inline.groovy",
+            "begin": "\\$\\{",
+            "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.gsp" } },
+            "end": "\\}",
+            "endCaptures": { "0": { "name": "punctuation.section.embedded.end.gsp" } },
+            "patterns": [{ "include": "source.groovy" }]
+        },
+        "gsp-scriptlet": {
+            "name": "meta.embedded.block.groovy",
+            "begin": "<%(?!@|--)",
+            "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.gsp" } },
+            "end": "%>",
+            "endCaptures": { "0": { "name": "punctuation.section.embedded.end.gsp" } },
+            "patterns": [{ "include": "source.groovy" }]
+        },
+        "grails-tag": {
+            "begin": "(<)(/?)([A-Za-z_][\\w-]*)(:)([A-Za-z_][\\w-]*)",
+            "beginCaptures": {
+                "1": { "name": "punctuation.definition.tag.begin.html" },
+                "2": { "name": "punctuation.definition.tag.begin.html" },
+                "3": { "name": "entity.name.tag.namespace.gsp" },
+                "4": { "name": "punctuation.separator.namespace.gsp" },
+                "5": { "name": "entity.name.tag.gsp" }
+            },
+            "end": "(/?>)",
+            "endCaptures": { "1": { "name": "punctuation.definition.tag.end.html" } },
+            "patterns": [
+                { "include": "#gsp-expression" },
+                { "include": "text.html.basic#tag-stuff" }
+            ]
+        }
+    }
+}

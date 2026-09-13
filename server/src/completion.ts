@@ -14,6 +14,8 @@ import {
     inferDomainFromController,
 } from "./grailsProject";
 import { uriToPath } from "./uriUtils";
+import { getGspCompletions } from "./gspFeatures";
+import { getGormDslCompletions } from "./gormFeatures";
 
 // ─── Context detection ────────────────────────────────────────────────────────
 
@@ -795,12 +797,80 @@ function gormStaticCompletions(domain: DomainClass): CompletionItem[] {
         insertTextFormat: 2,
     }));
 
+    const dynamicFinderItems: CompletionItem[] = props.flatMap((p) => {
+        const property = capitalize(p.name);
+        const operators = [
+            ["LessThan", "$1"], ["LessThanEquals", "$1"],
+            ["GreaterThan", "$1"], ["GreaterThanEquals", "$1"],
+            ["Between", "$1, $2"], ["Like", "'$1'"], ["Ilike", "'$1'"],
+            ["IsNull", ""], ["IsNotNull", ""], ["Not", "$1"],
+            ["NotEqual", "$1"], ["InList", "$1"],
+        ];
+        const variants: CompletionItem[] = [];
+        for (const prefix of ["findBy", "findAllBy", "countBy"]) {
+            variants.push({
+                label: `${prefix}${property}`,
+                kind: CompletionItemKind.Method,
+                detail: `${d} dynamic finder for ${p.name}`,
+                insertText: `${prefix}${property}($1)`,
+                insertTextFormat: 2,
+            });
+            for (const [operator, args] of operators) {
+                variants.push({
+                    label: `${prefix}${property}${operator}`,
+                    kind: CompletionItemKind.Method,
+                    detail: `${d} dynamic finder — ${p.name} ${operator}`,
+                    insertText: `${prefix}${property}${operator}(${args})`,
+                    insertTextFormat: 2,
+                });
+            }
+        }
+        for (const prefix of ["findOrCreateBy", "findOrSaveBy"]) {
+            variants.push({
+                label: `${prefix}${property}`,
+                kind: CompletionItemKind.Method,
+                detail: `${d} dynamic persistence finder for ${p.name}`,
+                insertText: `${prefix}${property}($1)`,
+                insertTextFormat: 2,
+            });
+        }
+        variants.push({
+            label: `listOrderBy${property}`,
+            kind: CompletionItemKind.Method,
+            detail: `${d} list ordered by ${p.name}`,
+            insertText: `listOrderBy${property}(\${1:[order: 'asc']})`,
+            insertTextFormat: 2,
+        });
+        return variants;
+    });
+
     const staticItems: CompletionItem[] = [
         {
             label: "get",
             kind: CompletionItemKind.Method,
             detail: `${d}.get(id)`,
             insertText: "get($1)",
+            insertTextFormat: 2,
+        },
+        {
+            label: "getAll",
+            kind: CompletionItemKind.Method,
+            detail: `${d}.getAll(ids)` ,
+            insertText: "getAll($1)",
+            insertTextFormat: 2,
+        },
+        {
+            label: "read",
+            kind: CompletionItemKind.Method,
+            detail: `${d}.read(id) — read-only instance`,
+            insertText: "read($1)",
+            insertTextFormat: 2,
+        },
+        {
+            label: "load",
+            kind: CompletionItemKind.Method,
+            detail: `${d}.load(id) — proxy without immediate query`,
+            insertText: "load($1)",
             insertTextFormat: 2,
         },
         {
@@ -832,6 +902,27 @@ function gormStaticCompletions(domain: DomainClass): CompletionItem[] {
             insertTextFormat: 2,
         },
         {
+            label: "findAllWhere",
+            kind: CompletionItemKind.Method,
+            detail: `${d}.findAllWhere(Map)`,
+            insertText: "findAllWhere(${1:property}: ${2:value})",
+            insertTextFormat: 2,
+        },
+        {
+            label: "findOrCreateWhere",
+            kind: CompletionItemKind.Method,
+            detail: `${d}.findOrCreateWhere(Map)`,
+            insertText: "findOrCreateWhere(${1:property}: ${2:value})",
+            insertTextFormat: 2,
+        },
+        {
+            label: "findOrSaveWhere",
+            kind: CompletionItemKind.Method,
+            detail: `${d}.findOrSaveWhere(Map)`,
+            insertText: "findOrSaveWhere(${1:property}: ${2:value})",
+            insertTextFormat: 2,
+        },
+        {
             label: "findAll",
             kind: CompletionItemKind.Method,
             detail: `${d}.findAll { ... }`,
@@ -860,15 +951,64 @@ function gormStaticCompletions(domain: DomainClass): CompletionItem[] {
             insertTextFormat: 2,
         },
         {
+            label: "whereAny",
+            kind: CompletionItemKind.Method,
+            detail: `${d}.whereAny { ... }`,
+            insertText: "whereAny { $1 }",
+            insertTextFormat: 2,
+        },
+        {
+            label: "first",
+            kind: CompletionItemKind.Method,
+            detail: `${d}.first()` ,
+            insertText: "first()",
+            insertTextFormat: 2,
+        },
+        {
+            label: "last",
+            kind: CompletionItemKind.Method,
+            detail: `${d}.last()` ,
+            insertText: "last()",
+            insertTextFormat: 2,
+        },
+        {
             label: "executeQuery",
             kind: CompletionItemKind.Method,
             detail: `${d}.executeQuery(hql)`,
             insertText: "executeQuery('${1:HQL}')",
             insertTextFormat: 2,
         },
+        {
+            label: "executeUpdate",
+            kind: CompletionItemKind.Method,
+            detail: `${d}.executeUpdate(hql)`,
+            insertText: "executeUpdate('${1:HQL}')",
+            insertTextFormat: 2,
+        },
+        {
+            label: "withTransaction",
+            kind: CompletionItemKind.Method,
+            detail: `${d}.withTransaction { status -> ... }`,
+            insertText: "withTransaction { status ->\n\t$1\n}",
+            insertTextFormat: 2,
+        },
+        {
+            label: "withSession",
+            kind: CompletionItemKind.Method,
+            detail: `${d}.withSession { session -> ... }`,
+            insertText: "withSession { session ->\n\t$1\n}",
+            insertTextFormat: 2,
+        },
+        {
+            label: "withNewSession",
+            kind: CompletionItemKind.Method,
+            detail: `${d}.withNewSession { session -> ... }`,
+            insertText: "withNewSession { session ->\n\t$1\n}",
+            insertTextFormat: 2,
+        },
     ];
 
-    return [...staticItems, ...findByItems, ...findAllByItems];
+    return [...staticItems, ...findByItems, ...findAllByItems, ...dynamicFinderItems];
 }
 
 // ── GORM instance completions ─────────────────────────────────────────────────
@@ -886,6 +1026,16 @@ function gormInstanceCompletions(domain: DomainClass): CompletionItem[] {
             kind: CompletionItemKind.Property,
             detail: `hasMany: ${domain.hasMany[rel]}[]`,
         }),
+    );
+
+    const associationMethods: CompletionItem[] = Object.entries(domain.hasMany).flatMap(
+        ([relation, type]) => {
+            const suffix = capitalize(relation);
+            return [
+                { label: `addTo${suffix}`, kind: CompletionItemKind.Method, detail: `Add ${type} to ${relation}`, insertText: `addTo${suffix}($1)`, insertTextFormat: 2 },
+                { label: `removeFrom${suffix}`, kind: CompletionItemKind.Method, detail: `Remove ${type} from ${relation}`, insertText: `removeFrom${suffix}($1)`, insertTextFormat: 2 },
+            ];
+        },
     );
 
     const instanceMethods: CompletionItem[] = [
@@ -922,6 +1072,10 @@ function gormInstanceCompletions(domain: DomainClass): CompletionItem[] {
             kind: CompletionItemKind.Property,
             detail: "ValidationErrors",
         },
+        { label: "id", kind: CompletionItemKind.Property, detail: "Persistent identifier" },
+        { label: "version", kind: CompletionItemKind.Property, detail: "Optimistic locking version" },
+        { label: "properties", kind: CompletionItemKind.Property, detail: "Domain properties map" },
+        { label: "ident", kind: CompletionItemKind.Method, detail: "Returns the persistent identifier", insertText: "ident()", insertTextFormat: 2 },
         {
             label: "hasErrors",
             kind: CompletionItemKind.Method,
@@ -957,9 +1111,15 @@ function gormInstanceCompletions(domain: DomainClass): CompletionItem[] {
             insertText: "isAttached()",
             insertTextFormat: 2,
         },
+        { label: "isDirty", kind: CompletionItemKind.Method, detail: "Checks whether the instance or a property changed", insertText: "isDirty(${1:'property'})", insertTextFormat: 2 },
+        { label: "getDirtyPropertyNames", kind: CompletionItemKind.Method, detail: "Returns changed persistent property names", insertText: "getDirtyPropertyNames()", insertTextFormat: 2 },
+        { label: "getPersistentValue", kind: CompletionItemKind.Method, detail: "Returns a property's original persistent value", insertText: "getPersistentValue('${1:property}')", insertTextFormat: 2 },
+        { label: "merge", kind: CompletionItemKind.Method, detail: "Merges a detached instance", insertText: "merge()", insertTextFormat: 2 },
+        { label: "lock", kind: CompletionItemKind.Method, detail: "Obtains a pessimistic lock", insertText: "lock()", insertTextFormat: 2 },
+        { label: "clearErrors", kind: CompletionItemKind.Method, detail: "Clears validation errors", insertText: "clearErrors()", insertTextFormat: 2 },
     ];
 
-    return [...propItems, ...hasManyItems, ...instanceMethods];
+    return [...propItems, ...hasManyItems, ...associationMethods, ...instanceMethods];
 }
 
 // ── Controller method completions ────────────────────────────────────────────
@@ -1131,6 +1291,26 @@ function controllerScopeCompletions(
             detail: "Flash scope — persists for next request only",
         },
         {
+            label: "grailsApplication",
+            kind: CompletionItemKind.Variable,
+            detail: "GrailsApplication — configuration, metadata and application context",
+        },
+        {
+            label: "servletContext",
+            kind: CompletionItemKind.Variable,
+            detail: "Jakarta ServletContext (Grails 7)",
+        },
+        {
+            label: "controllerName",
+            kind: CompletionItemKind.Variable,
+            detail: "Logical name of the current controller",
+        },
+        {
+            label: "actionName",
+            kind: CompletionItemKind.Variable,
+            detail: "Logical name of the current action",
+        },
+        {
             label: "respond",
             kind: CompletionItemKind.Method,
             detail: "REST-aware respond (content negotiation)",
@@ -1157,6 +1337,20 @@ function controllerScopeCompletions(
             detail: "Pass model to the next action in a chain",
             insertText:
                 "chain(action: '${1:next}', model: [${2:key}: ${3:value}])",
+            insertTextFormat: 2,
+        },
+        {
+            label: "forward",
+            kind: CompletionItemKind.Method,
+            detail: "Forward the current request to another action or URI",
+            insertText: "forward(${1|action,controller,uri|}: '$2')",
+            insertTextFormat: 2,
+        },
+        {
+            label: "header",
+            kind: CompletionItemKind.Method,
+            detail: "Set an HTTP response header",
+            insertText: "header '${1:name}', '${2:value}'",
             insertTextFormat: 2,
         },
         {
@@ -1356,6 +1550,12 @@ export function getCompletions(
     params: TextDocumentPositionParams,
     project: GrailsProject | null,
 ): CompletionItem[] {
+    if (project) {
+        const gspCompletions = getGspCompletions(doc, params, project);
+        if (gspCompletions) return gspCompletions;
+        const gormDslCompletions = getGormDslCompletions(doc, params, project);
+        if (gormDslCompletions) return gormDslCompletions;
+    }
     const ctx = detectContext(doc, params, project);
     const filePath = uriToPath(doc.uri);
 

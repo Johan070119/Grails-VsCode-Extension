@@ -1,5 +1,26 @@
 # Change Log
 
+## [0.6.0] - 2026-09-12
+
+### Added
+
+- Dedicated `gsp` language mode with mixed HTML, Groovy expression/scriptlet, JavaScript and CSS tokenization.
+- Grails and Asset Pipeline tag completion with context-aware attributes and snippets.
+- Completion of controller names/actions, views, templates, layouts and static assets from GSP attributes.
+- GSP navigation to templates, layouts, custom TagLib closures, controllers/actions and static assets.
+- GSP hover, outline symbols and fast diagnostics for unknown tags, missing required attributes, invalid literal controllers/templates/layouts and unclosed expressions.
+- Context-aware GORM completion inside `constraints`, `mapping`, criteria and `where` closures.
+- Expanded static GORM API, persistence finders, criteria operators and dynamic-finder operators for domain properties.
+- Expanded domain instance API, dirty checking and `addTo*`/`removeFrom*` association helpers.
+- Parsed domain constraints and transient properties in the project model and hover information.
+- Grails 7 controller scope members such as `grailsApplication`, `servletContext`, `controllerName`, `actionName`, `forward` and `header`.
+- Regression tests covering the new Grails 7/GORM/GSP completion, navigation, hover and diagnostics.
+
+### Changed
+
+- `.gsp` files now use their own language identifier instead of being registered as plain Groovy.
+- Package metadata now declares the SPDX `Apache-2.0` license identifier directly.
+
 ## [0.5.0] - 2026-09-11
 
 ### Added

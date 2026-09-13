@@ -8,15 +8,15 @@
 
 Soporte para desarrollar aplicaciones Grails en Visual Studio Code, inspirado en la experiencia de IntelliJ IDEA. Grails 7.1.x es la prioridad actual y Grails 2.5.6 se mantiene como carril de regresión; otras versiones permanecen experimentales hasta completar su matriz de pruebas.
 
-## Novedades de la versión 0.5.0
+## Novedades de la versión 0.6.0
 
-- Modelo multi-root con detección exacta de versión y actualización incremental.
-- Indexación de clases y miembros Groovy/Java del proyecto.
-- Completion, definición, hover y símbolos básicos para tipos propios.
-- Servidor semántico Groovy JVM verificable, incluido de forma experimental.
-- Classpath transitivo y source sets obtenidos automáticamente mediante `gradlew`.
-- Ejecución segura wrapper-first y compatibilidad con Restricted Mode.
-- CI en Linux, macOS y Windows, además de pruebas de regresión 2.5.6/7.1.1.
+- DSL contextual de GORM para `constraints`, `mapping`, criteria y `where`.
+- Dynamic finders con operadores (`Ilike`, `Between`, `GreaterThan`, `InList`, etc.).
+- API GORM ampliada: `getAll`, `read`, `load`, `whereAny`, transacciones, dirty checking y asociaciones.
+- Lenguaje GSP propio con HTML/Groovy/JavaScript/CSS embebidos.
+- Completion de tags `g:`/`asset:`, atributos, controllers, actions, templates, layouts y assets.
+- Ctrl/Cmd+Click desde GSP hacia TagLibs, controllers/actions, templates, layouts y recursos estáticos.
+- Hover, outline y diagnósticos rápidos específicos de GSP.
 
 ---
 
@@ -28,11 +28,12 @@ El servidor LSP analiza tu proyecto en tiempo real e indexa dominios, controller
 
 **Domain Classes y GORM**
 - Propiedades del dominio al escribir `instancia.`
-- Dynamic finders: `Book.findByTitle(`, `Book.findAllByAuthor(`
+- Dynamic finders: `Book.findByTitle(`, `Book.findAllByAuthorIlike(`, `Book.countByPagesGreaterThan(`
 - Chaining de finders: `Book.findByTitleAnd` → sugiere `AndAuthor`, `AndPrice`, etc.
-- Métodos estáticos: `list()`, `get()`, `count()`, `exists()`, `withCriteria { }`, `where { }`
-- Métodos de instancia: `save()`, `delete()`, `validate()`, `hasErrors()`, `refresh()`
-- Relaciones `hasMany` y `belongsTo`
+- Métodos estáticos: `list()`, `get()`, `getAll()`, `read()`, `load()`, `withCriteria { }`, `where { }`, `whereAny { }`
+- Métodos de instancia: persistencia, validación, dirty checking, locking y sesión
+- Relaciones `hasMany`/`belongsTo` y helpers `addTo*`/`removeFrom*`
+- Completion dentro de `constraints`, `mapping`, criteria builders y consultas `where`
 
 **Controllers y Servicios**
 - Al escribir `miServicio.` muestra los métodos del servicio parseados en tiempo real
@@ -43,7 +44,7 @@ El servidor LSP analiza tu proyecto en tiempo real e indexa dominios, controller
 - Soporta métodos `public static`, `private`, `protected` y con tipos de retorno Java
 
 **Controllers — scope y navegación**
-- Variables de scope: `params`, `request`, `response`, `session`, `flash`
+- Variables de scope: `params`, `request`, `response`, `session`, `flash`, `grailsApplication`, `servletContext`, `controllerName`, `actionName`
 - `render(` y `redirect(` con sus named arguments (`view:`, `model:`, `action:`, `controller:`)
 - Al escribir `view: "` muestra las vistas GSP disponibles con navegación de carpetas
 - Al escribir `controller: "` lista los controllers del proyecto
@@ -92,6 +93,9 @@ render(view: "/layouts/")  // → muestra carpetas y .gsp dentro de views/layout
 | Cualquier archivo | `def bookService` | `BookService.groovy` |
 | GSP | `<g:render template="row">` | `_row.gsp` en la misma carpeta |
 | GSP | `controller="book" action="show"` | Línea de `def show()` en `BookController` |
+| GSP | `<app:badge>` | Closure `badge` en el TagLib del proyecto |
+| GSP | `<asset:javascript src="application.js">` | Recurso de Asset Pipeline |
+| GSP | `<meta name="layout" content="main">` | `views/layouts/main.gsp` |
 
 ```groovy
 class BookController {
@@ -217,9 +221,13 @@ Detección automática de versión desde `gradle.properties`, `build.gradle`, `b
 - Un proyecto que contenga la carpeta `grails-app/`
 - Node.js (incluido con VS Code)
 
+### GSP
+
+Los archivos `.gsp` tienen un modo de lenguaje dedicado. La extensión combina la gramática HTML con expresiones y scriptlets Groovy, además de JavaScript y CSS embebidos. El servidor Grails aporta tags, atributos, rutas, navegación y diagnósticos; la validación semántica completa mediante documentos virtuales continúa en desarrollo.
+
 ### Servidor semántico experimental
 
-La versión 0.5.0 incluye el servidor Groovy JVM, pero permanece desactivado por defecto mientras se completa la fusión de resultados con el servidor Grails. Para probarlo:
+La versión 0.6.0 incluye el servidor Groovy JVM, pero permanece desactivado por defecto mientras se completa la fusión de resultados con el servidor Grails. Para probarlo:
 
 1. Instala un JDK 17 o superior.
 2. Abre un workspace confiable.
@@ -243,7 +251,7 @@ Consulta [la arquitectura](docs/ARCHITECTURE.md), [el plan](docs/IMPLEMENTATION_
 ### Desde VSIX
 
 ```bash
-code --install-extension grails-extension-vscode-0.5.0.vsix
+code --install-extension grails-extension-vscode-0.6.0.vsix
 ```
 
 ---

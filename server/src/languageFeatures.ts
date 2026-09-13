@@ -11,6 +11,7 @@ import {
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { GrailsProject, SourceClass, SourceMember } from "./grailsProject";
 import { pathToUri, uriToPath } from "./uriUtils";
+import { getGspHover, getGspSymbols } from "./gspFeatures";
 
 function wordAtPosition(
     document: TextDocument,
@@ -75,6 +76,8 @@ export function getHover(
     project: GrailsProject | null,
 ): Hover | null {
     if (!project) return null;
+    const gspHover = getGspHover(document, params);
+    if (gspHover) return gspHover;
     const word = wordAtPosition(document, params.position);
     if (!word) return null;
 
@@ -82,12 +85,19 @@ export function getHover(
     if (domain) {
         const properties = domain.properties
             .slice(0, 20)
-            .map((property) => `- \`${property.type} ${property.name}\``)
+            .map((property) => {
+                const constraints = domain.constraints[property.name];
+                const suffix = constraints?.length ? ` — ${constraints.join(", ")}` : "";
+                return `- \`${property.type} ${property.name}\`${suffix}`;
+            })
             .join("\n");
+        const transients = domain.transients.length
+            ? `\n\nTransient properties: ${domain.transients.map((name) => `\`${name}\``).join(", ")}`
+            : "";
         return {
             contents: {
                 kind: MarkupKind.Markdown,
-                value: `**Grails domain** \`${domain.qualifiedName}\`\n\n${properties}`,
+                value: `**Grails domain** \`${domain.qualifiedName}\`\n\n${properties}${transients}`,
             },
         };
     }
@@ -125,6 +135,8 @@ export function getDocumentSymbols(
     project: GrailsProject | null,
 ): SymbolInformation[] {
     if (!project) return [];
+    const gspSymbols = getGspSymbols(document);
+    if (gspSymbols.length > 0) return gspSymbols;
     const sourceClass = sourceClassForDocument(document, project);
     if (!sourceClass) return [];
 

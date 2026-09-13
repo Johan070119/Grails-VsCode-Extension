@@ -9,6 +9,7 @@ import {
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { GrailsProject, DomainClass } from "./grailsProject";
 import { uriToPath, pathToUri } from "./uriUtils";
+import { getGspDefinition } from "./gspFeatures";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -593,7 +594,10 @@ export function getDefinition(
 
     // 1. GSP-specific tag resolution
     if (isGsp) {
-        return resolveGspTag(line, project, filePath) ?? null;
+        const gspLocation =
+            getGspDefinition(doc, params, project) ??
+            resolveGspTag(line, project, filePath);
+        if (gspLocation) return gspLocation;
     }
 
     // 2. render(view/template)

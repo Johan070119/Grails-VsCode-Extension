@@ -20,6 +20,7 @@ import {
     getWorkspaceSymbols,
 } from "./languageFeatures";
 import { uriToPath } from "./uriUtils";
+import { getGspDiagnostics } from "./gspFeatures";
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -49,6 +50,12 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
                     ".",
                     "(",
                     ":",
+                    "<",
+                    " ",
+                    "=",
+                    "\"",
+                    "'",
+                    "/",
                     "A",
                     "B",
                     "C",
@@ -139,6 +146,20 @@ connection.onDocumentSymbol((params) => {
 
 connection.onWorkspaceSymbol((params) =>
     getWorkspaceSymbols(params.query, indexer.getProjects()),
+);
+
+function publishDocumentDiagnostics(document: TextDocument): void {
+    const project = indexer.getProject(uriToPath(document.uri));
+    connection.sendDiagnostics({
+        uri: document.uri,
+        diagnostics: getGspDiagnostics(document, project),
+    });
+}
+
+documents.onDidOpen((event) => publishDocumentDiagnostics(event.document));
+documents.onDidChangeContent((event) => publishDocumentDiagnostics(event.document));
+documents.onDidClose((event) =>
+    connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] }),
 );
 
 // ─── File watching ────────────────────────────────────────────────────────────

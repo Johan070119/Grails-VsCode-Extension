@@ -9,6 +9,8 @@ export interface DomainClass {
     properties: DomainProperty[];
     hasMany: Record<string, string>;
     belongsTo: Record<string, string>;
+    constraints: Record<string, string[]>;
+    transients: string[];
 }
 
 export interface DomainProperty {
@@ -528,6 +530,25 @@ const BELONGS_TO_RE = /static\s+belongsTo\s*=\s*\[([^\]]+)\]/;
 const RELATION_ENTRY_RE = /(\w+)\s*:\s*(\w+)/g;
 const CLASS_NAME_RE = /class\s+(\w+)/;
 
+function extractStaticClosure(src: string, name: string): string {
+    const marker = new RegExp(`static\\s+${name}\\s*=\\s*\\{`).exec(src);
+    if (!marker) return "";
+    const start = marker.index + marker[0].length;
+    let depth = 1;
+    let quote: string | null = null;
+    for (let index = start; index < src.length; index++) {
+        const char = src[index];
+        if (quote) {
+            if (char === quote && src[index - 1] !== "\\") quote = null;
+            continue;
+        }
+        if (char === "'" || char === '"') { quote = char; continue; }
+        if (char === "{") depth++;
+        else if (char === "}" && --depth === 0) return src.slice(start, index);
+    }
+    return src.slice(start);
+}
+
 // Auto-injected GORM fields — not real domain properties
 const SKIP_FIELD_NAMES = new Set([
     "version",
@@ -613,6 +634,20 @@ function parseDomainClass(filePath: string): DomainClass | null {
         }
     }
 
+    const constraints: Record<string, string[]> = {};
+    for (const line of extractStaticClosure(src, "constraints").split("\n")) {
+        const match = /^\s*([A-Za-z_]\w*)\s*(?:\(|\s)\s*(.*)/.exec(line);
+        if (!match || !properties.some((property) => property.name === match[1])) continue;
+        constraints[match[1]] = [...match[2].matchAll(/([A-Za-z_]\w*)\s*:/g)].map((option) => option[1]);
+    }
+
+    const transientMatch = /static\s+transients\s*=\s*\[([^\]]*)\]/.exec(src);
+    const transients = transientMatch
+        ? [...transientMatch[1].matchAll(/['"]([^'"]+)['"]|\b([A-Za-z_]\w*)\b/g)].map(
+              (match) => match[1] ?? match[2],
+          )
+        : [];
+
     return {
         name,
         qualifiedName: qualifiedName(packageName, name),
@@ -621,6 +656,8 @@ function parseDomainClass(filePath: string): DomainClass | null {
         properties,
         hasMany,
         belongsTo,
+        constraints,
+        transients,
     };
 }
 

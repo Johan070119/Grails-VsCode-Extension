@@ -42,35 +42,41 @@ Pendiente:
 - invalidación cuando cambien build scripts, catálogos o plugins;
 - evaluar Gradle Tooling API frente al bridge actual con métricas reales.
 
-## Fase 2 — núcleo semántico Groovy/Java (en progreso)
+## Fase 2 — núcleo semántico Groovy/Java (base integrada)
 
 Terminado: spike JVM, adaptador multi-root opt-in, índice puente de tipos/miembros,
-completion, definition, hover y símbolos básicos. El build del servidor JVM está
-anclado por commit y SHA-256.
+completion, definition, hover y símbolos básicos. El servidor JVM expone además
+signature help, references, rename y diagnósticos compiler-backed al activarlo. El
+build está anclado por commit y SHA-256.
 
 Siguiente entrega:
 
 - comprobar automáticamente que el VSIX contiene el JAR verificado y sus licencias;
 - fusionar y deduplicar respuestas TypeScript/JVM;
-- activar signature help, references, rename y diagnósticos compiler-backed;
 - cancelación, límites de memoria, reinicio y pruebas de rendimiento.
 
-## Fase 3 — semántica Grails 7 y GORM
+## Fase 3 — semántica Grails 7 y GORM (primer corte funcional)
 
-- reconocer Domain, Service, Controller, Command Object, TagLib y artefactos de plugins;
-- tipos inyectados (`params`, `request`, servicios, `grailsApplication`, etc.);
-- métodos GORM estáticos/de instancia, dynamic finders y validación de propiedades;
-- where queries, criteria builders, data services, constraints y mappings;
-- inferencia de asociaciones, colecciones, nullable y validadores;
-- documentación contextual proveniente de la versión detectada.
+Terminado en 0.6.0: reconocimiento de Domain, Service, Controller, TagLib y tipos
+Groovy/Java; miembros inyectados comunes; API GORM estática/de instancia;
+dynamic finders con operadores y propiedades reales; DSLs de `constraints`,
+`mapping`, criteria y `where`; asociaciones, restricciones y transients básicos.
 
-## Fase 4 — GSP, HTML, JavaScript y CSS
+Pendiente: Command Objects y Data Services como artefactos de primera clase,
+tipos genéricos de asociaciones, nullability/validators compiler-backed,
+artefactos aportados por plugins y documentación exacta por datastore/versión.
 
-- documentos virtuales GSP que preserven HTML/CSS/JS embebido;
-- completado de tags Grails y atributos tipados;
-- navegación controller/action/view/template y taglib;
-- navegación de recursos estáticos, assets y layouts;
-- diagnósticos de tags, expresiones y referencias inexistentes.
+## Fase 4 — GSP, HTML, JavaScript y CSS (primer corte funcional)
+
+Terminado en 0.6.0: modo de lenguaje y gramática mixta GSP/HTML/Groovy/JS/CSS;
+completion de tags Grails/Asset Pipeline y atributos; valores contextuales para
+controllers, actions, views, templates, layouts y assets; navegación cruzada a
+controller/action/template/layout/TagLib/recurso; hover, outline y diagnósticos
+rápidos de tags, atributos obligatorios y referencias literales.
+
+Pendiente: proyección mediante documentos virtuales a los language servers de
+HTML/CSS/JavaScript/Groovy, tipos compiler-backed dentro de expresiones GSP,
+validación estructural completa y descriptores de tags aportados por plugins.
 
 ## Fase 5 — navegación y refactorización transversal
 

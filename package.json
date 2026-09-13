@@ -2,9 +2,9 @@
     "name": "grails-extension-vscode",
     "displayName": "Grails Support For VS Code",
     "description": "Grails language support for VS Code with completion, navigation, project model, GSP support and CLI integration",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "publisher": "JohanMixtegaCisneros",
-    "license": "SEE LICENSE IN LICENSE.md",
+    "license": "Apache-2.0",
     "homepage": "https://github.com/Johan070119/Grails-VsCode-Extension#readme",
     "bugs": {
         "url": "https://github.com/Johan070119/Grails-VsCode-Extension/issues"
@@ -57,6 +57,7 @@
     ],
     "activationEvents": [
         "onLanguage:groovy",
+        "onLanguage:gsp",
         "workspaceContains:grails-app"
     ],
     "main": "./dist/extension.js",
@@ -65,13 +66,36 @@
             {
                 "id": "groovy",
                 "extensions": [
-                    ".groovy",
-                    ".gsp"
+                    ".groovy"
                 ],
                 "aliases": [
                     "Groovy",
                     "Grails"
                 ]
+            },
+            {
+                "id": "gsp",
+                "extensions": [
+                    ".gsp"
+                ],
+                "aliases": [
+                    "GSP",
+                    "Groovy Server Pages"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "gsp",
+                "scopeName": "text.html.gsp",
+                "path": "./syntaxes/gsp.tmLanguage.json",
+                "embeddedLanguages": {
+                    "meta.embedded.inline.groovy": "groovy",
+                    "meta.embedded.block.groovy": "groovy",
+                    "source.js.embedded.html": "javascript",
+                    "source.css.embedded.html": "css"
+                }
             }
         ],
         "configuration": {

@@ -39,8 +39,29 @@
 - [ ] Add an automated VSIX-content check for the staged JVM JAR and notices.
 - [x] Feed Gradle-resolved classpath and source-set directories to the JVM server.
 - [ ] Merge generic Groovy and Grails completion without duplicates.
-- [ ] Compiler-backed signature help, references, rename and diagnostics.
+- [x] Compiler-backed signature help, references, rename and diagnostics are exposed by the opt-in JVM server.
 - [ ] Performance/cancellation tests on TimeShare-sized projects.
+
+## Phase 3 — Grails 7 and GORM semantics
+
+- [x] Index domains, controllers, services, TagLibs and project Groovy/Java types.
+- [x] Complete common injected controller members and declared services.
+- [x] Complete the common static/instance GORM API and property-aware dynamic finders.
+- [x] Complete `constraints`, `mapping`, criteria and `where` closure DSLs.
+- [x] Parse `hasMany`, `belongsTo`, constraints and transient properties.
+- [ ] Model command objects and GORM Data Services as first-class artifact types.
+- [ ] Infer generic association types, nullability and custom validator types through the compiler.
+- [ ] Version-resolved API documentation for every GORM datastore/plugin.
+
+## Phase 4 — GSP and web languages
+
+- [x] Dedicated GSP language and mixed HTML/Groovy/JavaScript/CSS grammar.
+- [x] Grails/Asset Pipeline tag and attribute completion.
+- [x] Controller, action, view, template, layout, TagLib and asset navigation.
+- [x] GSP hover and document symbols.
+- [x] Fast diagnostics for literal tag/reference errors and unclosed expressions.
+- [ ] Virtual-document projection into the HTML, CSS, JavaScript and Groovy language servers.
+- [ ] Compiler-backed GSP expression types and plugin-provided tag descriptors.
 
 ## Measured local baseline
 
