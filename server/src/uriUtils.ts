@@ -41,18 +41,19 @@ export function uriToPath(uri: string): string {
     // Remove the scheme
     let p = uri.slice("file://".length);
 
+    // Decode percent-encoded characters (spaces → %20, etc.) before looking for
+    // the drive letter: VS Code encodes the colon, sending file:///c%3A/...
+    try {
+        p = decodeURIComponent(p);
+    } catch {
+        /* keep as-is */
+    }
+
     // On Windows the URI is file:///C:/... → after removing "file://" we get "/C:/..."
     // We must strip that leading slash for Windows paths only.
     // Detection: second char is ':' means it's a Windows drive letter (e.g. /C:/foo)
     if (p.length >= 3 && p[0] === "/" && p[2] === ":") {
         p = p.slice(1); // "/C:/foo" → "C:/foo"
-    }
-
-    // Decode percent-encoded characters (spaces → %20, etc.)
-    try {
-        p = decodeURIComponent(p);
-    } catch {
-        /* keep as-is */
     }
 
     // Normalize to OS-native separators
