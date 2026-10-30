@@ -58,8 +58,10 @@ export async function discoverGradleProjectModel(
         "--console=plain",
     ];
     const command = windows ? process.env.ComSpec || "cmd.exe" : wrapper;
+    // cmd /s /c strips one outer pair of quotes; without verbatim arguments,
+    // Node would escape the inner quotes as \" and cmd could not find gradlew.bat.
     const args = windows
-        ? ["/d", "/v:off", "/s", "/c", windowsCommandLine(wrapper, gradleArgs)]
+        ? ["/d", "/v:off", "/s", "/c", `"${windowsCommandLine(wrapper, gradleArgs)}"`]
         : gradleArgs;
     const { stdout } = await execFile(command, args, {
         cwd: projectRoot,
@@ -69,6 +71,7 @@ export async function discoverGradleProjectModel(
         timeout: timeoutMs,
         maxBuffer: 20 * 1024 * 1024,
         windowsHide: true,
+        windowsVerbatimArguments: windows,
         signal,
     });
     return parseGradleProjectModel(stdout);
